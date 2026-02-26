@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.16](https://github.com/postalsys/Mutiauk/compare/mutiauk-v0.2.15...mutiauk-v0.2.16) (2026-02-26)
+
+
+### Bug Fixes
+
+* remove stale IsReply byte from ICMP wire format and simplify ([13852e7](https://github.com/postalsys/Mutiauk/commit/13852e7c9f20e0437823237d3b36ada69812f2e9))
+
 ## [0.2.15](https://github.com/postalsys/Mutiauk/compare/mutiauk-v0.2.14...mutiauk-v0.2.15) (2026-02-07)
 
 
