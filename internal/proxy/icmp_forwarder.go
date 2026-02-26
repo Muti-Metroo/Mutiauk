@@ -95,9 +95,6 @@ func (f *ICMPForwarder) getOrCreateSession(ctx context.Context, dstIP net.IP, id
 	f.mu.RUnlock()
 
 	if exists {
-		session.mu.Lock()
-		session.lastUsed = time.Now()
-		session.mu.Unlock()
 		return session, nil
 	}
 
@@ -107,9 +104,6 @@ func (f *ICMPForwarder) getOrCreateSession(ctx context.Context, dstIP net.IP, id
 
 	// Double-check after acquiring write lock
 	if session, exists = f.sessions[key]; exists {
-		session.mu.Lock()
-		session.lastUsed = time.Now()
-		session.mu.Unlock()
 		return session, nil
 	}
 
@@ -202,6 +196,15 @@ func (f *ICMPForwarder) cleanup() {
 	}
 }
 
+// clearSessions closes all sessions and removes them from the map.
+// Caller must hold f.mu.
+func (f *ICMPForwarder) clearSessions() {
+	for key, session := range f.sessions {
+		session.relay.Close()
+		delete(f.sessions, key)
+	}
+}
+
 // Close closes all sessions and stops the forwarder. Safe to call multiple times.
 func (f *ICMPForwarder) Close() error {
 	f.closeOnce.Do(func() {
@@ -211,10 +214,7 @@ func (f *ICMPForwarder) Close() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	for key, session := range f.sessions {
-		session.relay.Close()
-		delete(f.sessions, key)
-	}
+	f.clearSessions()
 
 	return nil
 }
@@ -223,13 +223,9 @@ func (f *ICMPForwarder) Close() error {
 func (f *ICMPForwarder) UpdateClient(client *socks5.Client) {
 	f.clientHolder.Set(client)
 
-	// Clear existing sessions since they use the old client
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	for key, session := range f.sessions {
-		session.relay.Close()
-		delete(f.sessions, key)
-	}
+	f.clearSessions()
 }
 

@@ -13,6 +13,50 @@ import (
 	"go.uber.org/zap"
 )
 
+// --- Test Helpers ---
+
+// icmpTestEnv holds the common test environment for ICMP forwarder tests
+// that require a mock SOCKS5 server.
+type icmpTestEnv struct {
+	server    *mockSOCKS5Server
+	forwarder *ICMPForwarder
+	ctx       context.Context
+	cancel    context.CancelFunc
+}
+
+// newICMPTestEnv creates a complete test environment with mock server,
+// SOCKS5 client, ICMP forwarder, and a 5-second context.
+func newICMPTestEnv(t *testing.T) *icmpTestEnv {
+	t.Helper()
+
+	server := newMockSOCKS5Server(t)
+	client := socks5.NewClient(server.Addr(), nil, time.Second, time.Second)
+	forwarder := NewICMPForwarder(client, zap.NewNop(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+	env := &icmpTestEnv{
+		server:    server,
+		forwarder: forwarder,
+		ctx:       ctx,
+		cancel:    cancel,
+	}
+
+	t.Cleanup(func() {
+		cancel()
+		forwarder.Close()
+		server.Close()
+	})
+
+	return env
+}
+
+// sessionCount returns the number of active sessions (thread-safe).
+func (e *icmpTestEnv) sessionCount() int {
+	e.forwarder.mu.RLock()
+	defer e.forwarder.mu.RUnlock()
+	return len(e.forwarder.sessions)
+}
+
 // --- ICMPForwarder Tests ---
 
 func TestNewICMPForwarder(t *testing.T) {
@@ -44,31 +88,22 @@ func TestNewICMPForwarder(t *testing.T) {
 }
 
 func TestNewICMPForwarder_DefaultTimeout(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-
-	forwarder := NewICMPForwarder(client, logger, 0)
+	forwarder := NewICMPForwarder(&socks5.Client{}, zap.NewNop(), 0)
+	defer forwarder.Close()
 
 	if forwarder.timeout != 10*time.Second {
 		t.Errorf("timeout = %v, want 10s (default)", forwarder.timeout)
 	}
-
-	forwarder.Close()
 }
 
 func TestICMPForwarder_Close(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
+	forwarder := NewICMPForwarder(&socks5.Client{}, zap.NewNop(), time.Second)
 
-	forwarder := NewICMPForwarder(client, logger, time.Second)
-
-	// Close should not panic
 	err := forwarder.Close()
 	if err != nil {
 		t.Errorf("Close returned error: %v", err)
 	}
 
-	// Verify done channel is closed
 	select {
 	case <-forwarder.done:
 		// Expected - channel is closed
@@ -78,10 +113,7 @@ func TestICMPForwarder_Close(t *testing.T) {
 }
 
 func TestICMPForwarder_Close_Multiple(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-
-	forwarder := NewICMPForwarder(client, logger, time.Second)
+	forwarder := NewICMPForwarder(&socks5.Client{}, zap.NewNop(), time.Second)
 
 	// Multiple closes should not panic (protected by sync.Once)
 	forwarder.Close()
@@ -90,19 +122,14 @@ func TestICMPForwarder_Close_Multiple(t *testing.T) {
 }
 
 func TestICMPForwarder_CleanupLoopStops(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-
-	forwarder := NewICMPForwarder(client, logger, time.Second)
+	forwarder := NewICMPForwarder(&socks5.Client{}, zap.NewNop(), time.Second)
 
 	// Give cleanup loop time to start
 	time.Sleep(10 * time.Millisecond)
 
-	// Close should stop the cleanup loop
+	// Close should stop the cleanup loop.
+	// If the loop does not stop, this test would leak goroutines.
 	forwarder.Close()
-
-	// If cleanup loop doesn't stop, this test would hang or leak goroutines
-	// The test passing indicates the loop stopped correctly
 }
 
 // --- Session Key Tests ---
@@ -124,132 +151,46 @@ func TestICMPSessionKey(t *testing.T) {
 	}
 }
 
-// --- Mock ICMP Relay for Testing ---
-
-type mockICMPRelay struct {
-	sendErr     error
-	receiveErr  error
-	receiveSeq  uint16
-	receiveData []byte
-	closed      bool
-	mu          sync.Mutex
-}
-
-func (m *mockICMPRelay) SendEcho(id, seq uint16, payload []byte) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.sendErr
-}
-
-func (m *mockICMPRelay) ReceiveEcho() ([]byte, uint16, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.receiveErr != nil {
-		return nil, 0, m.receiveErr
-	}
-	return m.receiveData, m.receiveSeq, nil
-}
-
-func (m *mockICMPRelay) SetReadDeadline(t time.Time) error {
-	return nil
-}
-
-func (m *mockICMPRelay) Close() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.closed = true
-	return nil
-}
-
-// --- Session Tests ---
-
-func TestICMPSession_SendEcho(t *testing.T) {
-	mockRelay := &mockICMPRelay{
-		receiveSeq:  42,
-		receiveData: []byte("pong"),
-	}
-
-	session := &icmpSession{
-		relay:    &socks5.ICMPRelay{}, // We can't easily mock this
-		lastUsed: time.Now(),
-	}
-
-	// Since we can't easily inject the mock relay into the session struct
-	// (it expects *socks5.ICMPRelay), we'll test the session logic differently
-	_ = mockRelay
-	_ = session
-
-	// This test documents that session.sendEcho requires a real ICMPRelay
-	// For proper unit testing, consider using an interface instead of concrete type
-}
-
 // --- Cleanup Tests ---
 
 func TestICMPForwarder_Cleanup_RemovesStale(t *testing.T) {
-	// This test verifies the cleanup logic removes stale sessions
-	// We use a mock server to create a real session that can be safely closed
-
-	server := newMockSOCKS5Server(t)
-	defer server.Close()
-
-	logger := zap.NewNop()
-	client := socks5.NewClient(server.Addr(), nil, time.Second, time.Second)
-
-	forwarder := NewICMPForwarder(client, logger, time.Second)
-	defer forwarder.Close()
-
-	// Create a real session via HandleICMP
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newICMPTestEnv(t)
 
 	srcIP := net.ParseIP("10.0.0.1")
 	dstIP := net.ParseIP("8.8.8.8")
 
-	_, err := forwarder.HandleICMP(ctx, srcIP, dstIP, 1234, 1, []byte("ping"))
+	_, err := env.forwarder.HandleICMP(env.ctx, srcIP, dstIP, 1234, 1, []byte("ping"))
 	if err != nil {
 		t.Fatalf("HandleICMP failed: %v", err)
 	}
 
-	// Verify session exists
-	forwarder.mu.RLock()
-	sessionCount := len(forwarder.sessions)
-	forwarder.mu.RUnlock()
-	if sessionCount != 1 {
-		t.Fatalf("expected 1 session, got %d", sessionCount)
+	if n := env.sessionCount(); n != 1 {
+		t.Fatalf("expected 1 session, got %d", n)
 	}
 
 	// Manually mark the session as stale
 	key := icmpSessionKey{dstIP: dstIP.String(), id: 1234}
-	forwarder.mu.Lock()
-	if session, exists := forwarder.sessions[key]; exists {
+	env.forwarder.mu.Lock()
+	if session, exists := env.forwarder.sessions[key]; exists {
 		session.mu.Lock()
-		session.lastUsed = time.Now().Add(-2 * time.Minute) // Well past 60s threshold
+		session.lastUsed = time.Now().Add(-2 * time.Minute)
 		session.mu.Unlock()
 	}
-	forwarder.mu.Unlock()
+	env.forwarder.mu.Unlock()
 
-	// Trigger cleanup
-	forwarder.cleanup()
+	env.forwarder.cleanup()
 
-	// Verify session was removed
-	forwarder.mu.RLock()
-	_, exists := forwarder.sessions[key]
-	forwarder.mu.RUnlock()
+	env.forwarder.mu.RLock()
+	_, exists := env.forwarder.sessions[key]
+	env.forwarder.mu.RUnlock()
 	if exists {
 		t.Error("stale session should be removed after cleanup")
 	}
 }
 
 func TestICMPForwarder_Cleanup_KeepsRecent(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-
-	forwarder := NewICMPForwarder(client, logger, time.Second)
+	forwarder := NewICMPForwarder(&socks5.Client{}, zap.NewNop(), time.Second)
 	defer forwarder.Close()
-
-	// Create a mock session with recent lastUsed
-	// Note: We can't add a real session without a working SOCKS5 server
-	// This test documents the expected behavior
 
 	forwarder.mu.RLock()
 	count := len(forwarder.sessions)
@@ -263,10 +204,7 @@ func TestICMPForwarder_Cleanup_KeepsRecent(t *testing.T) {
 // --- Concurrent Access Tests ---
 
 func TestICMPForwarder_ConcurrentClose(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-
-	forwarder := NewICMPForwarder(client, logger, time.Second)
+	forwarder := NewICMPForwarder(&socks5.Client{}, zap.NewNop(), time.Second)
 
 	var wg sync.WaitGroup
 
@@ -283,15 +221,11 @@ func TestICMPForwarder_ConcurrentClose(t *testing.T) {
 }
 
 func TestICMPForwarder_ConcurrentSessionAccess(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-
-	forwarder := NewICMPForwarder(client, logger, time.Second)
+	forwarder := NewICMPForwarder(&socks5.Client{}, zap.NewNop(), time.Second)
 	defer forwarder.Close()
 
 	var wg sync.WaitGroup
 
-	// Concurrent reads of sessions map
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func() {
@@ -305,25 +239,22 @@ func TestICMPForwarder_ConcurrentSessionAccess(t *testing.T) {
 	wg.Wait()
 }
 
-// --- Integration-style Tests with Mock Server ---
+// --- Mock SOCKS5 Server ---
 
 // mockSOCKS5Server simulates a SOCKS5 server that supports ICMP
 type mockSOCKS5Server struct {
 	listener net.Listener
-	t        *testing.T
 }
 
-func newMockSOCKS5Server(t *testing.T) *mockSOCKS5Server {
+func newMockSOCKS5Server(tb testing.TB) *mockSOCKS5Server {
+	tb.Helper()
+
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("failed to create listener: %v", err)
+		tb.Fatalf("failed to create listener: %v", err)
 	}
 
-	server := &mockSOCKS5Server{
-		listener: listener,
-		t:        t,
-	}
-
+	server := &mockSOCKS5Server{listener: listener}
 	go server.acceptLoop()
 
 	return server
@@ -379,13 +310,11 @@ func (s *mockSOCKS5Server) handleConnection(conn net.Conn) {
 		reply := []byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
 		conn.Write(reply)
 
-		// Handle ICMP echo relay
 		s.handleICMPRelay(conn)
 	}
 }
 
 func (s *mockSOCKS5Server) handleICMPRelay(conn net.Conn) {
-	// Read echo request: [ID:2][Seq:2][PayloadLen:2][Payload:N]
 	header := make([]byte, 6)
 	if _, err := io.ReadFull(conn, header); err != nil {
 		return
@@ -402,13 +331,12 @@ func (s *mockSOCKS5Server) handleICMPRelay(conn net.Conn) {
 		}
 	}
 
-	// Send echo reply: [ID:2][Seq:2][PayloadLen:2][Payload:N][IsReply:1]
-	reply := make([]byte, 6+len(payload)+1)
+	// Echo the request back as a reply
+	reply := make([]byte, 6+len(payload))
 	binary.BigEndian.PutUint16(reply[0:2], id)
 	binary.BigEndian.PutUint16(reply[2:4], seq)
 	binary.BigEndian.PutUint16(reply[4:6], uint16(len(payload)))
 	copy(reply[6:], payload)
-	reply[len(reply)-1] = 1 // IsReply = true
 
 	conn.Write(reply)
 }
@@ -421,41 +349,16 @@ func (s *mockSOCKS5Server) Close() {
 	s.listener.Close()
 }
 
-// newMockSOCKS5ServerB creates a mock server for benchmarks
-func newMockSOCKS5ServerB(b *testing.B) *mockSOCKS5Server {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		b.Fatalf("failed to create listener: %v", err)
-	}
-
-	server := &mockSOCKS5Server{
-		listener: listener,
-		t:        nil, // Not used in benchmark
-	}
-
-	go server.acceptLoop()
-
-	return server
-}
+// --- Integration Tests with Mock Server ---
 
 func TestICMPForwarder_HandleICMP_WithMockServer(t *testing.T) {
-	server := newMockSOCKS5Server(t)
-	defer server.Close()
-
-	logger := zap.NewNop()
-	client := socks5.NewClient(server.Addr(), nil, time.Second, time.Second)
-
-	forwarder := NewICMPForwarder(client, logger, 5*time.Second)
-	defer forwarder.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newICMPTestEnv(t)
 
 	srcIP := net.ParseIP("10.0.0.1")
 	dstIP := net.ParseIP("8.8.8.8")
 	payload := []byte("ping data")
 
-	reply, err := forwarder.HandleICMP(ctx, srcIP, dstIP, 1234, 1, payload)
+	reply, err := env.forwarder.HandleICMP(env.ctx, srcIP, dstIP, 1234, 1, payload)
 	if err != nil {
 		t.Fatalf("HandleICMP failed: %v", err)
 	}
@@ -466,131 +369,74 @@ func TestICMPForwarder_HandleICMP_WithMockServer(t *testing.T) {
 }
 
 func TestICMPForwarder_HandleICMP_SessionReuse(t *testing.T) {
-	server := newMockSOCKS5Server(t)
-	defer server.Close()
-
-	logger := zap.NewNop()
-	client := socks5.NewClient(server.Addr(), nil, time.Second, time.Second)
-
-	forwarder := NewICMPForwarder(client, logger, 5*time.Second)
-	defer forwarder.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newICMPTestEnv(t)
 
 	srcIP := net.ParseIP("10.0.0.1")
 	dstIP := net.ParseIP("8.8.8.8")
 
 	// First request creates a session
-	_, err := forwarder.HandleICMP(ctx, srcIP, dstIP, 1234, 1, []byte("ping1"))
+	_, err := env.forwarder.HandleICMP(env.ctx, srcIP, dstIP, 1234, 1, []byte("ping1"))
 	if err != nil {
 		t.Fatalf("first HandleICMP failed: %v", err)
 	}
 
-	forwarder.mu.RLock()
-	sessionCount := len(forwarder.sessions)
-	forwarder.mu.RUnlock()
-
-	if sessionCount != 1 {
-		t.Errorf("expected 1 session after first request, got %d", sessionCount)
+	if n := env.sessionCount(); n != 1 {
+		t.Errorf("expected 1 session after first request, got %d", n)
 	}
 
-	// Second request with same dstIP and id should reuse the session
-	// Note: This will fail because the mock server closes after one echo
-	// In a real server, the session would be reused
+	// Second request with same dstIP and id should reuse the session.
+	// Note: the mock server closes after one echo, so actual reuse
+	// would fail here. In production, sessions are long-lived.
 }
 
 func TestICMPForwarder_HandleICMP_DifferentDestinations(t *testing.T) {
-	server := newMockSOCKS5Server(t)
-	defer server.Close()
-
-	logger := zap.NewNop()
-	client := socks5.NewClient(server.Addr(), nil, time.Second, time.Second)
-
-	forwarder := NewICMPForwarder(client, logger, 5*time.Second)
-	defer forwarder.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newICMPTestEnv(t)
 
 	srcIP := net.ParseIP("10.0.0.1")
 
-	// Request to first destination
-	_, err := forwarder.HandleICMP(ctx, srcIP, net.ParseIP("8.8.8.8"), 1234, 1, []byte("ping1"))
+	_, err := env.forwarder.HandleICMP(env.ctx, srcIP, net.ParseIP("8.8.8.8"), 1234, 1, []byte("ping1"))
 	if err != nil {
 		t.Fatalf("first HandleICMP failed: %v", err)
 	}
 
-	// Request to second destination should create a new session
-	_, err = forwarder.HandleICMP(ctx, srcIP, net.ParseIP("1.1.1.1"), 1234, 1, []byte("ping2"))
+	_, err = env.forwarder.HandleICMP(env.ctx, srcIP, net.ParseIP("1.1.1.1"), 1234, 1, []byte("ping2"))
 	if err != nil {
 		t.Fatalf("second HandleICMP failed: %v", err)
 	}
 
-	forwarder.mu.RLock()
-	sessionCount := len(forwarder.sessions)
-	forwarder.mu.RUnlock()
-
-	if sessionCount != 2 {
-		t.Errorf("expected 2 sessions for different destinations, got %d", sessionCount)
+	if n := env.sessionCount(); n != 2 {
+		t.Errorf("expected 2 sessions for different destinations, got %d", n)
 	}
 }
 
 func TestICMPForwarder_HandleICMP_DifferentIDs(t *testing.T) {
-	server := newMockSOCKS5Server(t)
-	defer server.Close()
-
-	logger := zap.NewNop()
-	client := socks5.NewClient(server.Addr(), nil, time.Second, time.Second)
-
-	forwarder := NewICMPForwarder(client, logger, 5*time.Second)
-	defer forwarder.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newICMPTestEnv(t)
 
 	srcIP := net.ParseIP("10.0.0.1")
 	dstIP := net.ParseIP("8.8.8.8")
 
-	// Request with first ID
-	_, err := forwarder.HandleICMP(ctx, srcIP, dstIP, 1111, 1, []byte("ping1"))
+	_, err := env.forwarder.HandleICMP(env.ctx, srcIP, dstIP, 1111, 1, []byte("ping1"))
 	if err != nil {
 		t.Fatalf("first HandleICMP failed: %v", err)
 	}
 
-	// Request with second ID should create a new session
-	_, err = forwarder.HandleICMP(ctx, srcIP, dstIP, 2222, 1, []byte("ping2"))
+	_, err = env.forwarder.HandleICMP(env.ctx, srcIP, dstIP, 2222, 1, []byte("ping2"))
 	if err != nil {
 		t.Fatalf("second HandleICMP failed: %v", err)
 	}
 
-	forwarder.mu.RLock()
-	sessionCount := len(forwarder.sessions)
-	forwarder.mu.RUnlock()
-
-	if sessionCount != 2 {
-		t.Errorf("expected 2 sessions for different IDs, got %d", sessionCount)
+	if n := env.sessionCount(); n != 2 {
+		t.Errorf("expected 2 sessions for different IDs, got %d", n)
 	}
 }
 
 func TestICMPForwarder_HandleICMP_EmptyPayload(t *testing.T) {
-	server := newMockSOCKS5Server(t)
-	defer server.Close()
-
-	logger := zap.NewNop()
-	client := socks5.NewClient(server.Addr(), nil, time.Second, time.Second)
-
-	forwarder := NewICMPForwarder(client, logger, 5*time.Second)
-	defer forwarder.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newICMPTestEnv(t)
 
 	srcIP := net.ParseIP("10.0.0.1")
 	dstIP := net.ParseIP("8.8.8.8")
 
-	// Empty payload should work
-	reply, err := forwarder.HandleICMP(ctx, srcIP, dstIP, 1234, 1, []byte{})
+	reply, err := env.forwarder.HandleICMP(env.ctx, srcIP, dstIP, 1234, 1, []byte{})
 	if err != nil {
 		t.Fatalf("HandleICMP with empty payload failed: %v", err)
 	}
@@ -601,28 +447,17 @@ func TestICMPForwarder_HandleICMP_EmptyPayload(t *testing.T) {
 }
 
 func TestICMPForwarder_HandleICMP_LargePayload(t *testing.T) {
-	server := newMockSOCKS5Server(t)
-	defer server.Close()
-
-	logger := zap.NewNop()
-	client := socks5.NewClient(server.Addr(), nil, time.Second, time.Second)
-
-	forwarder := NewICMPForwarder(client, logger, 5*time.Second)
-	defer forwarder.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newICMPTestEnv(t)
 
 	srcIP := net.ParseIP("10.0.0.1")
 	dstIP := net.ParseIP("8.8.8.8")
 
-	// Large payload (typical max ICMP payload is ~64KB)
 	largePayload := make([]byte, 1024)
 	for i := range largePayload {
 		largePayload[i] = byte(i % 256)
 	}
 
-	reply, err := forwarder.HandleICMP(ctx, srcIP, dstIP, 1234, 1, largePayload)
+	reply, err := env.forwarder.HandleICMP(env.ctx, srcIP, dstIP, 1234, 1, largePayload)
 	if err != nil {
 		t.Fatalf("HandleICMP with large payload failed: %v", err)
 	}
@@ -633,22 +468,12 @@ func TestICMPForwarder_HandleICMP_LargePayload(t *testing.T) {
 }
 
 func TestICMPForwarder_HandleICMP_IPv6(t *testing.T) {
-	server := newMockSOCKS5Server(t)
-	defer server.Close()
-
-	logger := zap.NewNop()
-	client := socks5.NewClient(server.Addr(), nil, time.Second, time.Second)
-
-	forwarder := NewICMPForwarder(client, logger, 5*time.Second)
-	defer forwarder.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	env := newICMPTestEnv(t)
 
 	srcIP := net.ParseIP("2001:db8::1")
 	dstIP := net.ParseIP("2001:db8::2")
 
-	reply, err := forwarder.HandleICMP(ctx, srcIP, dstIP, 1234, 1, []byte("ping"))
+	reply, err := env.forwarder.HandleICMP(env.ctx, srcIP, dstIP, 1234, 1, []byte("ping"))
 	if err != nil {
 		t.Fatalf("HandleICMP with IPv6 failed: %v", err)
 	}
@@ -679,7 +504,7 @@ func BenchmarkICMPSessionKey(b *testing.B) {
 }
 
 func BenchmarkICMPForwarder_HandleICMP(b *testing.B) {
-	server := newMockSOCKS5ServerB(b)
+	server := newMockSOCKS5Server(b)
 	defer server.Close()
 
 	logger := zap.NewNop()
@@ -695,7 +520,7 @@ func BenchmarkICMPForwarder_HandleICMP(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// Note: Each iteration creates a new session because the mock server
+		// Each iteration creates a new session because the mock server
 		// closes after one echo. In real usage, sessions would be reused.
 		_, _ = forwarder.HandleICMP(ctx, srcIP, dstIP, uint16(i), 1, payload)
 	}

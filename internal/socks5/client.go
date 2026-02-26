@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -531,19 +530,17 @@ func (r *UDPRelay) Close() error {
 //
 // Wire format for echo reply (server -> client):
 //
-//	[Identifier:2][Sequence:2][PayloadLen:2][Payload:N][IsReply:1]
+//	[Identifier:2][Sequence:2][PayloadLen:2][Payload:N]
+//
+// ICMPRelay is not safe for concurrent use. Callers must serialize access
+// (e.g., via icmpSession.mu in the ICMP forwarder).
 type ICMPRelay struct {
 	conn   net.Conn
 	destIP net.IP
-	mu     sync.Mutex
 }
 
 // SendEcho sends an ICMP echo request through the relay.
 func (r *ICMPRelay) SendEcho(id, seq uint16, payload []byte) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// Build echo request: [ID:2][Seq:2][PayloadLen:2][Payload:N]
 	buf := make([]byte, 6+len(payload))
 	binary.BigEndian.PutUint16(buf[0:2], id)
 	binary.BigEndian.PutUint16(buf[2:4], seq)
@@ -556,9 +553,7 @@ func (r *ICMPRelay) SendEcho(id, seq uint16, payload []byte) error {
 
 // ReceiveEcho receives an ICMP echo reply from the relay.
 // Returns the reply payload and sequence number.
-// Wire format: [ID:2][Seq:2][PayloadLen:2][Payload:N]
 func (r *ICMPRelay) ReceiveEcho() (payload []byte, seq uint16, err error) {
-	// Read header: [ID:2][Seq:2][PayloadLen:2]
 	header := make([]byte, 6)
 	if _, err := io.ReadFull(r.conn, header); err != nil {
 		return nil, 0, err
