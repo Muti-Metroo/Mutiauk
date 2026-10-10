@@ -1,0 +1,39 @@
+services:
+  # SOCKS5 proxy server for testing
+  socks5:
+    image: serjs/go-socks5-proxy
+    ports:
+      - "1080:1080"
+    environment:
+      - REQUIRE_AUTH=false
+    restart: unless-stopped
+
+  # Kali Linux container for running mutiauk
+  kali:
+    build:
+      context: ..
+      dockerfile: test/Dockerfile
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    depends_on:
+      - socks5
+    environment:
+      - SOCKS5_SERVER=socks5:1080
+    stdin_open: true
+    tty: true
+
+  # Target server for testing connectivity
+  target:
+    image: nginx:alpine
+    networks:
+      default:
+        ipv4_address: 172.31.0.100
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24

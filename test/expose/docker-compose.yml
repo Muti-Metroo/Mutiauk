@@ -1,0 +1,40 @@
+services:
+  muti-metroo-agent:
+    build:
+      context: ../../../Muti Metroo
+      dockerfile: Dockerfile
+    command: ["run", "-c", "/etc/muti-metroo/config.yaml"]
+    volumes:
+      - ./muti-metroo.yaml:/etc/muti-metroo/config.yaml:ro
+    ports:
+      - "18080:8080"
+
+  muti-metroo-agent2:
+    build:
+      context: ../../../Muti Metroo
+      dockerfile: Dockerfile
+    command: ["run", "-c", "/etc/muti-metroo/config.yaml"]
+    volumes:
+      - ./muti-metroo2.yaml:/etc/muti-metroo/config.yaml:ro
+    ports:
+      - "19090:9090"  # op-docs (folder forward)
+      - "19091:9091"  # op-web (tcp forward)
+    depends_on:
+      - muti-metroo-agent
+
+  # TCP forward target: a plain web server the entry dials for the
+  # "op-web" tcp forward, proving port forwarding end-to-end.
+  target-web:
+    image: nginx:alpine
+
+  mutiauk:
+    build:
+      context: ../..
+      dockerfile: test/expose/Dockerfile.entry
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    depends_on:
+      - muti-metroo-agent
+      - target-web

@@ -1,0 +1,45 @@
+# Muti Metroo Ingress Agent - SOCKS5 proxy
+agent:
+  id: "bbbb111111111111bbbb111111111111"
+  display_name: "ingress-node"
+
+listeners:
+  - transport: quic
+    address: ":4434"
+
+peers:
+  - id: "aaaa000000000000aaaa000000000000"
+    transport: quic
+    address: "mm-exit:4433"
+
+socks5:
+  enabled: true
+  address: ":1080"
+
+# Enable UDP relay for SOCKS5 UDP ASSOCIATE
+udp:
+  enabled: true
+  max_associations: 1000
+  idle_timeout: 5m
+  max_datagram_size: 1472
+
+http:
+  enabled: true
+  address: ":8080"
+  dashboard: true
+
+mesh_hosts_suffix: "mesh"
+mesh_hosts:
+  - name: "echo-server.mesh"
+    ipv4: "172.31.0.100"
+    comment: "loadtest target"
+  - name: "v6-only.mesh"
+    ipv6: "fd00::42"
+  - name: "second.mesh"
+    ipv4: "172.31.0.200"
+  - name: "lonely.mesh"
+    ipv4: "10.99.99.99"
+    comment: "deliberately outside mutiauk routes"
+
+logging:
+  level: debug

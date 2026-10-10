@@ -1,0 +1,31 @@
+daemon:
+  pid_file: /var/run/mutiauk.pid
+
+tun:
+  name: tun0
+  mtu: 1400
+  address: 10.200.200.1/24
+
+socks5:
+  # Connect to host's Muti Metroo SOCKS5 port
+  server: host.docker.internal:1080
+  timeout: 30s
+
+routes:
+  # No static routes - rely on autoroutes
+  []
+
+autoroutes:
+  enabled: true
+  # Connect to host's Muti Metroo API
+  url: "http://host.docker.internal:8080"
+  poll_interval: 10s
+  timeout: 5s
+
+nat:
+  tcp_timeout: 1h
+  udp_timeout: 5m
+
+logging:
+  level: debug
+  format: console

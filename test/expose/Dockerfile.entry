@@ -1,0 +1,9 @@
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates iproute2 iputils-ping \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY bin/mutiauk-linux-amd64 /usr/local/bin/mutiauk
+COPY test/expose/mutiauk.yaml /etc/mutiauk/config.yaml
+COPY test/expose/files /srv/files
+CMD ["mutiauk", "daemon", "start", "-c", "/etc/mutiauk/config.yaml", "-v"]

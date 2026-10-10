@@ -1,0 +1,69 @@
+# Binaries
+bin/
+build/
+dist/
+mutiauk
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Vendored Wintun driver DLLs are embedded into the Windows binary via
+# go:embed (internal/tun) and must be tracked despite the *.dll rule above.
+!internal/tun/wintun/amd64/wintun.dll
+!internal/tun/wintun/arm64/wintun.dll
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+coverage/
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local config (keep example)
+config.yaml
+!configs/*.yaml
+configs/test-*.yaml
+
+# PID files
+*.pid
+
+# State files
+/var/lib/mutiauk/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+tmp/
+temp/
+
+# Debug files
+*.debug
+__debug_bin*
+
+# Notes and temporary analysis
+notes/
+
+# Claude Code local prompts
+.claude-prompts/

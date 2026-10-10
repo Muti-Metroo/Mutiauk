@@ -1,0 +1,58 @@
+# Mutiauk Configuration Example (Windows)
+# Copy this file to C:\ProgramData\Mutiauk\config.yaml and customize.
+#
+# Most paths below are the Windows defaults and may be omitted; they are
+# shown for clarity. The control endpoint is a named pipe (not a Unix
+# socket), and the TUN device is a Wintun adapter.
+
+daemon:
+  # PID file location (under %ProgramData%).
+  pid_file: C:\ProgramData\Mutiauk\mutiauk.pid
+  # Named-pipe control endpoint for the CLI. On Windows this must be a
+  # \\.\pipe\ path (not a filesystem path).
+  socket_path: \\.\pipe\mutiauk
+  # Health check HTTP port (0 to disable).
+  health_port: 0
+  # Host:port that `mutiauk status` opens through the SOCKS5 tunnel
+  # to verify TCP routing. Set to an in-mesh address for air-gapped nets.
+  # status_probe_target: "example.com:80"
+
+tun:
+  # Wintun adapter name (shown in Windows network UIs).
+  name: mutiauk0
+  # Maximum transmission unit.
+  mtu: 1400
+  # IPv4 address with CIDR notation.
+  address: 10.200.200.1/24
+  # IPv6 address with CIDR notation (optional; ignored if IPv6 is
+  # disabled host-wide).
+  address6: fd00:200::1/64
+
+socks5:
+  # SOCKS5 proxy the tunnel forwards through.
+  server: 127.0.0.1:1080
+  # username:
+  # password: (or set MUTIAUK_SOCKS5_PASSWORD)
+  timeout: 30s
+  keepalive: 15s
+
+# Receive routes/hosts/DNS suffixes from the Muti Metroo agent over the SOCKS5
+# endpoint (socks5.server). Enables the local DNS resolver. The only knob
+# is whether the feature is enabled.
+autoroutes:
+  enabled: false
+
+# Host DNS integration. On Windows "auto" selects the NRPT (Name
+# Resolution Policy Table) backend, which routes the mesh TLDs to the
+# local resolver. Use "none" to manage DNS yourself.
+dns_integration: auto
+
+# Static routes forwarded through the SOCKS5 tunnel.
+routes: []
+  # - destination: 10.0.0.0/8
+  #   comment: corp network
+  #   enabled: true
+
+logging:
+  level: info
+  format: console

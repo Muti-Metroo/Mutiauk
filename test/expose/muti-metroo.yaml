@@ -1,0 +1,23 @@
+agent:
+  id: "11111111111111111111111111111111"
+  display_name: "agent1-expose"
+  data_dir: "/app/data"
+  log_level: "debug"
+  log_format: "text"
+
+listeners:
+  - transport: quic
+    address: ":4433"
+
+http:
+  enabled: true
+  address: "0.0.0.0:8080"
+  token_hash: "$2b$12$W/kdNgMu.lpGBU9w2A44EOkO/LLp69vhfYSyBjrCrUL5rpEVNml4W"
+
+socks5:
+  enabled: true
+  address: "0.0.0.0:1080"
+
+forward:
+  endpoints: []
+  listeners: []

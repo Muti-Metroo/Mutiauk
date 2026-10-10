@@ -1,0 +1,28 @@
+daemon:
+  pid_file: /var/run/mutiauk.pid
+
+tun:
+  name: tun0
+  mtu: 1400
+  address: 10.200.200.1/24
+
+socks5:
+  # host.docker.internal points to host machine from Docker
+  server: host.docker.internal:1080
+  timeout: 30s
+  keepalive: 60s
+
+routes:
+  # Route Google DNS through SOCKS for UDP testing
+  - destination: 8.8.8.8/32
+    comment: "Google DNS"
+    enabled: true
+
+nat:
+  tcp_timeout: 1h
+  udp_timeout: 5m
+  gc_interval: 1m
+
+logging:
+  level: debug
+  format: console

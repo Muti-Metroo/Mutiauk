@@ -1,0 +1,38 @@
+# Mutiauk TUN configuration for load testing
+daemon:
+  pid_file: /var/run/mutiauk.pid
+  socket_path: /var/run/mutiauk.sock
+
+tun:
+  name: tun0
+  mtu: 1400
+  address: 10.200.200.1/24
+
+socks5:
+  server: "mm-ingress:1080"
+  timeout: 30s
+
+routes:
+  - destination: 172.31.0.0/24
+    comment: "Load test target network"
+    enabled: true
+
+# Pull mesh hosts from the ingress agent dashboard alongside autoroutes
+autoroutes:
+  enabled: true
+  url: "http://mm-ingress:8080"
+  poll_interval: 2s
+  timeout: 5s
+
+dns:
+  enabled: true
+  suffix: mesh
+
+nat:
+  table_size: 10000
+  tcp_timeout: 5m
+  udp_timeout: 1m
+
+logging:
+  level: debug
+  format: console

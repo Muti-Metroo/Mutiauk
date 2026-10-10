@@ -1,0 +1,30 @@
+# Load test Kali container with iperf3 and mutiauk
+FROM kalilinux/kali-rolling
+
+# Install tools including iperf3
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    nmap \
+    netcat-openbsd \
+    iproute2 \
+    iptables \
+    dnsutils \
+    tcpdump \
+    iperf3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy binary (built for Linux)
+COPY bin/mutiauk-linux-amd64 /app/bin/mutiauk-linux-amd64
+
+# Create symlink for convenience
+RUN ln -s /app/bin/mutiauk-linux-amd64 /usr/local/bin/mutiauk
+
+# Copy configs
+COPY configs/ /etc/mutiauk/
+
+# Default shell
+CMD ["/bin/bash"]

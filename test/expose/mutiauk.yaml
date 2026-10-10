@@ -1,0 +1,36 @@
+daemon:
+  pid_file: /var/run/mutiauk.pid
+  socket_path: /var/run/mutiauk.sock
+
+tun:
+  name: tun0
+  mtu: 1400
+  address: 10.222.222.1/24
+
+socks5:
+  server: muti-metroo-agent:1080
+  timeout: 30s
+
+routes: []
+
+autoroutes:
+  enabled: true
+  source: socks
+  poll_interval: 5s
+  timeout: 5s
+
+expose:
+  enabled: true
+  forwards:
+    - key: op-docs
+      type: folder
+      path: /srv/files
+      comment: "operator docs"
+    - key: op-web
+      type: tcp
+      target: target-web:80
+      comment: "tcp port forward to a web server"
+
+logging:
+  level: debug
+  format: console
