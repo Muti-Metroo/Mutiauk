@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/postalsys/Mutiauk/compare/mutiauk-v0.5.0...mutiauk-v0.5.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **deps:** patch golang.org/x/net vulnerability ([0869623](https://github.com/postalsys/Mutiauk/commit/0869623f7cda1ac4d251cffe1a1600841e2bd31d))
+
 ## [0.5.0](https://github.com/postalsys/Mutiauk/compare/mutiauk-v0.5.0...mutiauk-v0.5.0) (2026-10-10)
 
 
