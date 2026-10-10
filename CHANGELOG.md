@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/postalsys/Mutiauk/compare/mutiauk-v0.5.0...mutiauk-v0.5.0) (2026-10-10)
+
+
+### Miscellaneous Chores
+
+* re-release 0.5.0 after repository history migration ([8c32122](https://github.com/postalsys/Mutiauk/commit/8c321228980a59a9efcf3e6cd47d124d3f1cf7eb))
+
 ## [0.2.16](https://github.com/postalsys/Mutiauk/compare/mutiauk-v0.2.15...mutiauk-v0.2.16) (2026-02-26)
 
 
