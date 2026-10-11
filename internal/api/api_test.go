@@ -705,3 +705,29 @@ func TestConcurrentRequests(t *testing.T) {
 		}
 	}
 }
+
+// TestServerStopWithoutContextCancel is the regression guard for a shutdown
+// deadlock: the daemon's deferred teardown runs cleanup (apiServer.Stop)
+// before the deferred context cancel, so Stop must not rely on ctx to end
+// the accept loop. Previously the loop spun on the closed listener and
+// Stop's wg.Wait() never returned.
+func TestServerStopWithoutContextCancel(t *testing.T) {
+	state := &mockStateProvider{}
+	server := NewServer(testEndpointPath(t), state, zap.NewNop())
+	// Deliberately never cancelled: Stop alone must be enough.
+	if err := server.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		server.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop() hung with an uncancelled context")
+	}
+}

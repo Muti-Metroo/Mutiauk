@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -121,6 +122,13 @@ func (s *Server) acceptLoop(ctx context.Context) {
 
 		conn, err := s.listener.Accept()
 		if err != nil {
+			// Listener closed by Stop(): exit even when ctx is not yet
+			// cancelled, otherwise this loop spins on a dead listener and
+			// Stop's wg.Wait() never returns (daemon teardown order runs
+			// cleanup before the deferred context cancel).
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
 			select {
 			case <-ctx.Done():
 				return
