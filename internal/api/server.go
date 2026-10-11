@@ -48,6 +48,13 @@ type Server struct {
 	mu         sync.RWMutex
 	logger     *zap.Logger
 	wg         sync.WaitGroup
+
+	// conns tracks accepted connections so Stop can close them; an idle
+	// client would otherwise keep handleConnection blocked in Decode and
+	// wg.Wait() would hang shutdown forever.
+	connsMu sync.Mutex
+	conns   map[net.Conn]struct{}
+	closed  bool
 }
 
 // NewServer creates a new API server
@@ -55,6 +62,7 @@ func NewServer(socketPath string, state StateProvider, logger *zap.Logger) *Serv
 	s := &Server{
 		socketPath: socketPath,
 		handlers:   make(map[string]HandlerFunc),
+		conns:      make(map[net.Conn]struct{}),
 		state:      state,
 		logger:     logger,
 	}
@@ -101,9 +109,17 @@ func (s *Server) Start(ctx context.Context) error {
 
 // Stop stops the API server
 func (s *Server) Stop() {
+	s.connsMu.Lock()
+	s.closed = true
 	if s.listener != nil {
 		s.listener.Close()
 	}
+	// Close active connections: their handler goroutines are blocked in
+	// Decode and would otherwise keep wg.Wait() waiting forever.
+	for conn := range s.conns {
+		conn.Close()
+	}
+	s.connsMu.Unlock()
 	s.wg.Wait()
 	removeEndpoint(s.socketPath)
 	s.logger.Info("API server stopped")
@@ -138,6 +154,17 @@ func (s *Server) acceptLoop(ctx context.Context) {
 			}
 		}
 
+		s.connsMu.Lock()
+		if s.closed {
+			// Stop raced the accept: do not spawn a handler that Stop
+			// will never close.
+			s.connsMu.Unlock()
+			conn.Close()
+			return
+		}
+		s.conns[conn] = struct{}{}
+		s.connsMu.Unlock()
+
 		s.wg.Add(1)
 		go s.handleConnection(ctx, conn)
 	}
@@ -146,6 +173,11 @@ func (s *Server) acceptLoop(ctx context.Context) {
 // handleConnection handles a single client connection
 func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
+	defer func() {
+		s.connsMu.Lock()
+		delete(s.conns, conn)
+		s.connsMu.Unlock()
+	}()
 	defer conn.Close()
 
 	decoder := json.NewDecoder(conn)

@@ -731,3 +731,43 @@ func TestServerStopWithoutContextCancel(t *testing.T) {
 		t.Fatal("Stop() hung with an uncancelled context")
 	}
 }
+
+// TestServerStopClosesIdleConnections is the regression guard for a shutdown
+// hang: an accepted but idle client connection kept handleConnection blocked
+// in Decode, so Stop's wg.Wait() never returned even though the listener was
+// closed. Stop must close active connections too.
+func TestServerStopClosesIdleConnections(t *testing.T) {
+	state := &mockStateProvider{}
+	endpoint := testEndpointPath(t)
+	server := NewServer(endpoint, state, zap.NewNop())
+	if err := server.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Open a connection and do one real round trip so the server-side
+	// handler goroutine is definitely running, then leave it idle.
+	conn, err := dialEndpoint(endpoint, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if err := json.NewEncoder(conn).Encode(&Request{ID: 1, Method: "daemon.ping"}); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+	var resp Response
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		t.Fatalf("read ping response: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		server.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop() hung with an idle client connection open")
+	}
+}
