@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.2](https://github.com/postalsys/Mutiauk/compare/mutiauk-v0.5.1...mutiauk-v0.5.2) (2026-10-11)
+
+
+### Bug Fixes
+
+* **api:** close active client connections in Stop ([5fd5034](https://github.com/postalsys/Mutiauk/commit/5fd5034481e0ade88729326562a1e887c0a12cd9))
+* **api:** exit accept loop when the listener is closed ([42c4af2](https://github.com/postalsys/Mutiauk/commit/42c4af22832a9914f3cf47cd2d08d3c50329e301))
+* **ci:** keep VERSION in sync with release-please releases ([c1c8c05](https://github.com/postalsys/Mutiauk/commit/c1c8c050d8f5612434ba716ee12df20589dbf634))
+* **daemon:** stop mutating the live stored config in route persist paths ([ef80b30](https://github.com/postalsys/Mutiauk/commit/ef80b3000b018c2e774bb3dd50de02807eaa827d))
+* **dns:** shut down listeners on cancelled or failed Listen startup ([79171ad](https://github.com/postalsys/Mutiauk/commit/79171adec59d00c66cd774b7738ba03ad834bca4))
+* **expose:** only escalate reconnect backoff after failed sessions ([fba484b](https://github.com/postalsys/Mutiauk/commit/fba484b4064a8c815cff280ee10c5b9d7eacbea1))
+* **expose:** snapshot config in the reconnect loop; reset backoff after clean sessions ([d326bdf](https://github.com/postalsys/Mutiauk/commit/d326bdfb298257aae8123bc03aa9d0b8bbd84475))
+
 ## [0.5.1](https://github.com/postalsys/Mutiauk/compare/mutiauk-v0.5.0...mutiauk-v0.5.1) (2026-10-10)
 
 
