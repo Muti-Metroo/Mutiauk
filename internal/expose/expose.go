@@ -366,11 +366,18 @@ func (m *Manager) makeAckCallback(register bool) AckCallback {
 
 // run is the dial/register/serve/backoff loop.
 func (m *Manager) run(ctx context.Context) {
-	if !m.cfg.Enabled {
+	// Snapshot the config under the lock: Reload swaps m.cfg concurrently.
+	m.mu.Lock()
+	enabled := m.cfg.Enabled
+	minBackoff := m.cfg.ReconnectMin
+	maxBackoff := m.cfg.ReconnectMax
+	m.mu.Unlock()
+
+	if !enabled {
 		m.logger.Debug("expose: disabled; manager idle")
 		return
 	}
-	backoff := m.cfg.ReconnectMin
+	backoff := minBackoff
 	for {
 		if ctx.Err() != nil {
 			return
@@ -384,6 +391,9 @@ func (m *Manager) run(ctx context.Context) {
 			m.logger.Warn("expose: session ended", zap.Error(err), zap.Duration("retry_in", backoff))
 		} else {
 			m.logger.Info("expose: session ended; reconnecting", zap.Duration("retry_in", backoff))
+			// A session that ran cleanly did connect; reconnect promptly
+			// instead of riding whatever backoff earlier failures accrued.
+			backoff = minBackoff
 		}
 		select {
 		case <-ctx.Done():
@@ -391,8 +401,8 @@ func (m *Manager) run(ctx context.Context) {
 		case <-time.After(jitter(backoff)):
 		}
 		backoff *= 2
-		if backoff > m.cfg.ReconnectMax {
-			backoff = m.cfg.ReconnectMax
+		if backoff > maxBackoff {
+			backoff = maxBackoff
 		}
 	}
 }
