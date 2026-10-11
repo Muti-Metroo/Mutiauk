@@ -349,8 +349,8 @@ func TestServer_NormalizeSuffixesRejectsInvalid(t *testing.T) {
 		"trailing-hyphen-",
 		"double..dot",
 		"under_score",
-		strings.Repeat("a", 254),           // over 253 chars total
-		strings.Repeat("a", 64) + ".mesh",  // label over 63 chars
+		strings.Repeat("a", 254),          // over 253 chars total
+		strings.Repeat("a", 64) + ".mesh", // label over 63 chars
 	}
 	for _, suf := range malicious {
 		if got := s.SetState([]string{suf}, nil); len(got) != 0 {
