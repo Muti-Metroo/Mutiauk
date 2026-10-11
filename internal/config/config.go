@@ -254,10 +254,14 @@ type ForwardConfig struct {
 }
 
 // AutoRoutesConfig holds automatic route fetching configuration. Route/host
-// state always rides the SOCKS5 endpoint (socks5.server) route-watch stream;
-// the only knob is whether the feature is enabled.
+// state always rides the SOCKS5 endpoint (socks5.server) route-watch stream.
 type AutoRoutesConfig struct {
 	Enabled bool `yaml:"enabled"`
+	// StaleTimeout, when > 0, flushes auto-installed routes and mesh DNS
+	// state once no route-watch snapshot has arrived for that long (an upper
+	// bound for agent outages). Zero - the default - keeps routes through
+	// agent flaps indefinitely.
+	StaleTimeout time.Duration `yaml:"stale_timeout"`
 }
 
 // Load reads configuration from a YAML file
@@ -519,8 +523,10 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// autoroutes needs no validation: enabled is a bool, and route state
-	// always rides the SOCKS5 endpoint validated above.
+	// autoroutes.stale_timeout is optional; negative values are meaningless.
+	if c.AutoRoutes.StaleTimeout < 0 {
+		return fmt.Errorf("autoroutes.stale_timeout must not be negative")
+	}
 
 	// Validate dns_integration. etc-resolver (macOS) and nrpt (Windows) are
 	// real backends that DetectIntegration also selects under "auto"; accept

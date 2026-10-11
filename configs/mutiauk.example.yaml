@@ -107,9 +107,15 @@ routes:
 autoroutes:
   # Receive routes, mesh hosts, and DNS suffixes from the Muti Metroo agent over the
   # same SOCKS5 endpoint (socks5.server) used for traffic. Authorization is the
-  # SOCKS5 handshake; there is no separate URL or token. The only knob is
-  # whether the feature is enabled.
+  # SOCKS5 handshake; there is no separate URL or token.
   enabled: false
+
+  # Optional upper bound for agent outages. When no route-watch snapshot has
+  # arrived for this long, auto-installed routes and mesh DNS state are
+  # flushed; the next snapshot re-installs everything. Unset (or 0) keeps
+  # routes through agent flaps indefinitely - the default. The last-snapshot
+  # age is visible in `mutiauk status` and the admin dashboard either way.
+  # stale_timeout: 10m
 
 # Expose: publish local services to the mesh over the SOCKS5 endpoint
 # (socks5.server) using the Muti Metroo CmdExpose stream - the same single

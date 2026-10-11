@@ -227,7 +227,8 @@ function renderAgent(a) {
     ? badge(a.socks5_status, "success") : badge(a.socks5_status || "unknown", "secondary");
   const ar = a.autoroutes || {};
   const arState = ar.enabled
-    ? badge("enabled", "success") + ' <span class="text-secondary">' + (ar.count||0) + " routes" + (ar.last_poll ? ", polled " + esc(ar.last_poll) : "") + "</span>"
+    ? badge("enabled", "success") + ' <span class="text-secondary">' + (ar.count||0) + " routes"
+      + (ar.last_snapshot_age ? ", last snapshot " + esc(ar.last_snapshot_age) + " ago" : ", no snapshot yet") + "</span>"
     : badge("disabled", "secondary");
   let exp;
   if (!a.expose_enabled) exp = badge("disabled", "secondary");
@@ -299,7 +300,7 @@ function renderExposes(st) {
 // Route log: append new events (seq-deduplicated) to a scrolling window.
 let lastLogSeq = 0;
 let logHasContent = false;
-const actionVariant = { added: "success", removed: "danger" };
+const actionVariant = { added: "success", removed: "danger", "failed-add": "warning", "failed-remove": "warning" };
 const PLACEHOLDER = '<span class="text-secondary">No route changes recorded yet.</span>';
 function renderRouteLog(res) {
   const evs = (res && res.events) || [];
@@ -324,7 +325,8 @@ function renderRouteLog(res) {
       + badge(e.action, actionVariant[e.action] || "secondary") + " "
       + mono(e.destination)
       + (e.source ? ' <span class="text-secondary">[' + esc(e.source) + "]</span>" : "")
-      + (e.comment ? ' <span class="text-secondary">' + esc(e.comment) + "</span>" : "");
+      + (e.comment ? ' <span class="text-secondary">' + esc(e.comment) + "</span>" : "")
+      + (e.error ? ' <span class="text-danger">' + esc(e.error) + "</span>" : "");
     log.appendChild(line);
     appended = true;
   }

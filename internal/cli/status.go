@@ -19,11 +19,12 @@ import (
 
 // StatusResult holds the complete status information
 type StatusResult struct {
-	Daemon       DaemonStatus       `json:"daemon"`
-	TUN          TUNStatus          `json:"tun"`
-	SOCKS5       SOCKS5Status       `json:"socks5"`
-	Routes       []RouteStatus      `json:"routes"`
-	Connectivity ConnectivityStatus `json:"connectivity"`
+	Daemon       DaemonStatus           `json:"daemon"`
+	TUN          TUNStatus              `json:"tun"`
+	SOCKS5       SOCKS5Status           `json:"socks5"`
+	AutoRoutes   *api.AutoRoutesStatus  `json:"autoroutes,omitempty"`
+	Routes       []RouteStatus          `json:"routes"`
+	Connectivity ConnectivityStatus     `json:"connectivity"`
 }
 
 // DaemonStatus holds daemon process status
@@ -237,6 +238,13 @@ func gatherStatus(cfg *config.Config, skipConnTests bool) *StatusResult {
 		SOCKS5:       getSocks5Config(cfg),
 		Routes:       checkRoutesStatus(cfg),
 		Connectivity: ConnectivityStatus{},
+	}
+
+	// Surface autoroutes staleness: during an agent outage the last-snapshot
+	// age is the only sign that auto routes no longer reflect the mesh.
+	if apiStatus != nil && apiStatus.AutoRoutes.Enabled {
+		ar := apiStatus.AutoRoutes
+		result.AutoRoutes = &ar
 	}
 
 	if !skipConnTests {
@@ -567,6 +575,16 @@ func printHumanStatus(result *StatusResult, cfg *config.Config) error {
 		socks5Info += " (with auth)"
 	}
 	fmt.Printf("SOCKS5 Server: %s\n", socks5Info)
+
+	if result.AutoRoutes != nil {
+		arInfo := fmt.Sprintf("enabled, %d routes", result.AutoRoutes.Count)
+		if result.AutoRoutes.LastSnapshotAge != "" {
+			arInfo += ", last snapshot " + result.AutoRoutes.LastSnapshotAge + " ago"
+		} else {
+			arInfo += ", no snapshot yet"
+		}
+		fmt.Printf("Autoroutes:      %s\n", arInfo)
+	}
 
 	fmt.Println()
 	fmt.Println("Routes:")

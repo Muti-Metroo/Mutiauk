@@ -49,9 +49,15 @@ type StatusResult struct {
 
 // AutoRoutesStatus contains autoroutes status
 type AutoRoutesStatus struct {
-	Enabled  bool   `json:"enabled"`
-	Count    int    `json:"count"`
-	LastPoll string `json:"last_poll,omitempty"`
+	Enabled bool `json:"enabled"`
+	Count   int  `json:"count"`
+	// LastSnapshot is when the most recent route-watch snapshot was applied.
+	// Zero (and omitted) when the watcher has not received one yet; a stale
+	// LastSnapshot during an agent outage is how operators tell that the
+	// auto-installed routes no longer reflect the mesh.
+	LastSnapshot time.Time `json:"last_snapshot,omitempty"`
+	// LastSnapshotAge is the age of LastSnapshot, rounded to seconds.
+	LastSnapshotAge string `json:"last_snapshot_age,omitempty"`
 }
 
 // RouteCountStatus contains route counts by source
@@ -141,10 +147,14 @@ type RefusedRoute struct {
 type RouteEvent struct {
 	Seq         uint64    `json:"seq"`
 	Time        time.Time `json:"time"`
-	Action      string    `json:"action"` // "added" | "removed"
+	Action      string    `json:"action"` // "added" | "removed" | "failed-add" | "failed-remove"
 	Destination string    `json:"destination"`
 	Source      string    `json:"source,omitempty"` // "config" | "auto" | "manual"
 	Comment     string    `json:"comment,omitempty"`
+	// Error carries the apply failure for the "failed-*" actions: route
+	// events are recorded from the apply result, so a route that could not
+	// be installed or removed shows up as a failure rather than a change.
+	Error string `json:"error,omitempty"`
 }
 
 // RouteEventsResult is the response for "route.events" / the admin

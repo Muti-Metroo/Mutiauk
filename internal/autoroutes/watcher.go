@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/postalsys/mutiauk/internal/backoff"
@@ -43,6 +44,11 @@ type Watcher struct {
 	tunName  string
 	onUpdate DashboardCallback
 	logger   *zap.Logger
+
+	// lastSnapshot is the UnixNano timestamp of the most recently applied
+	// snapshot, or 0 when none has arrived. Used for status reporting and
+	// the daemon's stale-route watchdog.
+	lastSnapshot atomic.Int64
 }
 
 // NewWatcher creates a route-watch watcher. client must be a SOCKS5 client
@@ -54,6 +60,15 @@ func NewWatcher(client *socks5.Client, tunName string, onUpdate DashboardCallbac
 		onUpdate: onUpdate,
 		logger:   logger,
 	}
+}
+
+// LastSnapshot returns when the most recent route-watch snapshot was applied,
+// or the zero time when none has arrived yet.
+func (w *Watcher) LastSnapshot() time.Time {
+	if ns := w.lastSnapshot.Load(); ns != 0 {
+		return time.Unix(0, ns)
+	}
+	return time.Time{}
 }
 
 // Run opens a route-watch stream and applies pushed snapshots until ctx is
@@ -160,5 +175,6 @@ func (w *Watcher) apply(payload []byte) error {
 	if w.onUpdate != nil {
 		w.onUpdate(routes, suffixes, hosts)
 	}
+	w.lastSnapshot.Store(time.Now().UnixNano())
 	return nil
 }

@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"errors"
 	"net"
 	"testing"
 
+	"github.com/postalsys/mutiauk/internal/api"
 	"github.com/postalsys/mutiauk/internal/route"
 )
 
@@ -89,36 +91,42 @@ func TestFilterOutDests(t *testing.T) {
 	}
 }
 
-func TestRouteEventLogRecordPlanSkipsSelfRoutes(t *testing.T) {
+func TestRouteEventLogRecordResultSkipsSelfRoutes(t *testing.T) {
 	var log routeEventLog
-	plan := &route.Plan{
-		ToRemove: []route.Route{{Destination: cidr(t, "10.200.200.1/32")}}, // self route
-		ToAdd: []route.Route{
+	res := &route.ApplyResult{
+		Removed: []route.Route{{Destination: cidr(t, "10.200.200.1/32")}}, // self route
+		Added: []route.Route{
 			{Destination: cidr(t, "1.2.3.4/32"), Comment: "autoroute:a"},
 			{Destination: cidr(t, "192.168.0.0/16")},
 		},
+		Failed: []route.ApplyFailure{
+			{Route: route.Route{Destination: cidr(t, "203.0.113.0/24")}, Err: errors.New("boom")},
+		},
 	}
-	auto := map[string]bool{"1.2.3.4/32": true}
+	auto := map[string]bool{"1.2.3.4/32": true, "203.0.113.0/24": true}
 	cfgSet := map[string]bool{"192.168.0.0/16": true}
 	skip := map[string]bool{"10.200.200.1/32": true}
 
-	log.recordPlan(plan, auto, cfgSet, skip)
+	log.recordResult(res, auto, cfgSet, skip)
 
 	evs := log.snapshot()
-	if len(evs) != 2 {
-		t.Fatalf("len = %d, want 2 (self route skipped): %+v", len(evs), evs)
+	if len(evs) != 3 {
+		t.Fatalf("len = %d, want 3 (self route skipped): %+v", len(evs), evs)
 	}
-	bySrc := map[string]string{}
+	byAction := map[string]api.RouteEvent{}
 	for _, e := range evs {
-		bySrc[e.Destination] = e.Source
+		byAction[e.Destination] = e
 	}
-	if bySrc["1.2.3.4/32"] != "auto" {
-		t.Errorf("1.2.3.4/32 source = %q, want auto", bySrc["1.2.3.4/32"])
+	if ev := byAction["1.2.3.4/32"]; ev.Action != "added" || ev.Source != "auto" {
+		t.Errorf("1.2.3.4/32 event = %+v, want added/auto", ev)
 	}
-	if bySrc["192.168.0.0/16"] != "config" {
-		t.Errorf("192.168.0.0/16 source = %q, want config", bySrc["192.168.0.0/16"])
+	if ev := byAction["192.168.0.0/16"]; ev.Action != "added" || ev.Source != "config" {
+		t.Errorf("192.168.0.0/16 event = %+v, want added/config", ev)
 	}
-	if _, ok := bySrc["10.200.200.1/32"]; ok {
+	if ev := byAction["203.0.113.0/24"]; ev.Action != "failed-add" || ev.Error != "boom" || ev.Source != "auto" {
+		t.Errorf("203.0.113.0/24 event = %+v, want failed-add with error", ev)
+	}
+	if _, ok := byAction["10.200.200.1/32"]; ok {
 		t.Errorf("self route should have been skipped")
 	}
 }

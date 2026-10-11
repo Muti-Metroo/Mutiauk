@@ -117,6 +117,13 @@ type Server struct {
 	refused       []api.RefusedRoute
 	refusedLogged map[string]bool
 
+	// applyErrLogged dedupes the "failed to apply routes" Warn so one poison
+	// route does not spam the log on every route-watch push; a successful
+	// apply re-arms it.
+	applyErrMu     sync.Mutex
+	applyErrLogged bool
+	lastApplyErr   string
+
 	appliedMu sync.Mutex
 	applied   appliedDNSState // last-applied state; closes the diff cache
 }
@@ -125,8 +132,9 @@ type Server struct {
 // when the SOCKS5 config changes (the watcher pins its client at
 // construction) or when the daemon shuts down.
 type watcherHandle struct {
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx     context.Context
+	cancel  context.CancelFunc
+	watcher *autoroutes.Watcher
 }
 
 // appliedDNSState is the diff key used by applyDNSIntegration to skip
@@ -250,7 +258,7 @@ func (s *Server) startServices(ctx context.Context) {
 	s.refreshProtectedServerIPs()
 
 	if err := s.syncRoutes(); err != nil {
-		s.logger.Warn("failed to apply some routes", zap.Error(err))
+		s.warnApplyFailure("failed to apply some routes", err)
 	}
 
 	// Clear any stale host-DNS state (macOS /etc/resolver files, NM
@@ -482,7 +490,7 @@ func (s *Server) startAutoRoutes(ctx context.Context) {
 	)
 
 	wctx, wcancel := context.WithCancel(ctx)
-	handle := &watcherHandle{ctx: wctx, cancel: wcancel}
+	handle := &watcherHandle{ctx: wctx, cancel: wcancel, watcher: watcher}
 	s.servicesMu.Lock()
 	if s.watcher != nil {
 		s.watcher.cancel()
@@ -493,6 +501,13 @@ func (s *Server) startAutoRoutes(ctx context.Context) {
 	s.logger.Info("starting autoroutes route-watch over SOCKS5",
 		zap.String("server", cfg.SOCKS5.Server),
 	)
+
+	// By default auto routes ride out an agent outage indefinitely; with
+	// autoroutes.stale_timeout configured, flush them once no snapshot has
+	// arrived for that long.
+	if timeout := cfg.AutoRoutes.StaleTimeout; timeout > 0 {
+		go s.watchStaleAutoRoutes(wctx, watcher, timeout)
+	}
 
 	go func() {
 		for {
@@ -628,9 +643,7 @@ func resolveDNSListen(cfg *config.Config) (string, error) {
 // that doesn't yet know any hosts under it.
 func (s *Server) onDashboardUpdate(routes []route.Route, suffixes []string, hosts []autoroutes.DashboardMeshHost) {
 	s.routeState.setAutoRoutes(routes)
-	if err := s.syncRoutes(); err != nil {
-		s.logger.Warn("failed to apply autoroutes", zap.Error(err))
-	}
+	s.warnApplyFailure("failed to apply autoroutes", s.syncRoutes())
 
 	dnsServer, _, _ := s.dnsState()
 	if dnsServer == nil {
@@ -784,8 +797,8 @@ func (s *Server) syncRoutes() error {
 	desired, refused := splitProtectedRoutes(desired, s.protectedServerIPs(), destSet(autoRoutes), destSet(configRoutes))
 	s.setRefusedRoutes(refused)
 
-	// Diff first so we can log the add/remove changes before applying;
-	// in steady state the plan is empty and nothing is recorded.
+	// Diff against the kernel; in steady state the plan is empty and Apply
+	// records no events.
 	plan, err := s.routeMgr.Diff(desired)
 	if err != nil {
 		return err
@@ -801,9 +814,88 @@ func (s *Server) syncRoutes() error {
 	self := s.selfRouteSet()
 	plan.ToRemove = filterOutDests(plan.ToRemove, self)
 
-	s.routeEvents.recordPlan(plan, destSet(autoRoutes), destSet(configRoutes), self)
-	_, err = s.routeMgr.Apply(plan)
+	// Record events from the apply result, not the plan: a failed apply must
+	// show up as a failure, not as a successful add/remove.
+	res, err := s.routeMgr.Apply(plan)
+	s.routeEvents.recordResult(res, destSet(autoRoutes), destSet(configRoutes), self)
 	return err
+}
+
+// warnApplyFailure logs a route-apply failure at Warn, suppressing repeats of
+// the identical error so one persistently failing route does not spam the log
+// on every route-watch push. A nil error (a later apply succeeded) re-arms
+// the log so the next distinct failure is reported again.
+func (s *Server) warnApplyFailure(msg string, err error) {
+	s.applyErrMu.Lock()
+	defer s.applyErrMu.Unlock()
+	if err == nil {
+		s.applyErrLogged = false
+		s.lastApplyErr = ""
+		return
+	}
+	if s.applyErrLogged && s.lastApplyErr == err.Error() {
+		return
+	}
+	s.applyErrLogged = true
+	s.lastApplyErr = err.Error()
+	s.logger.Warn(msg, zap.Error(err))
+}
+
+// watchStaleAutoRoutes flushes auto-installed routes and mesh DNS state when
+// no route-watch snapshot has arrived within timeout. It runs only when
+// autoroutes.stale_timeout is configured; by default auto routes are kept
+// through agent flaps indefinitely.
+func (s *Server) watchStaleAutoRoutes(ctx context.Context, w *autoroutes.Watcher, timeout time.Duration) {
+	interval := timeout / 4
+	if interval < time.Second {
+		interval = time.Second
+	}
+	if interval > 30*time.Second {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	flushed := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		last := w.LastSnapshot()
+		if last.IsZero() {
+			continue // no snapshot ever arrived; there is nothing to flush
+		}
+		if time.Since(last) <= timeout {
+			flushed = false // fresh snapshot: re-arm
+			continue
+		}
+		if flushed {
+			continue
+		}
+		flushed = true
+		s.logger.Warn("no route-watch snapshot within autoroutes.stale_timeout; flushing auto routes and mesh DNS state",
+			zap.Duration("stale_timeout", timeout),
+			zap.Time("last_snapshot", last),
+		)
+		s.flushAutoRoutes()
+	}
+}
+
+// flushAutoRoutes drops all auto-installed routes and clears the mesh DNS
+// state (suffixes + hosts), leaving config routes in place. The next
+// route-watch snapshot re-installs everything via onDashboardUpdate.
+func (s *Server) flushAutoRoutes() {
+	s.routeState.setAutoRoutes(nil)
+	s.warnApplyFailure("failed to flush stale autoroutes", s.syncRoutes())
+
+	dnsServer, _, _ := s.dnsState()
+	if dnsServer == nil {
+		return
+	}
+	s.applyDNSIntegration(dnsServer.SetState(nil, nil))
 }
 
 // filterOutDests returns routes whose destination string is not in skip.
@@ -868,7 +960,7 @@ func (s *Server) Reload(cfg *config.Config) error {
 	s.refreshProtectedServerIPs()
 
 	if err := s.syncRoutes(); err != nil {
-		s.logger.Warn("failed to reapply routes", zap.Error(err))
+		s.warnApplyFailure("failed to reapply routes", err)
 	}
 
 	if s.exposeMgr != nil {
@@ -1001,6 +1093,10 @@ func (s *Server) GetStatus() *api.StatusResult {
 	result.AutoRoutes.Enabled = cfg.AutoRoutes.Enabled
 	if cfg.AutoRoutes.Enabled {
 		result.AutoRoutes.Count = autoRouteCount
+		if ts := s.lastRouteSnapshot(); !ts.IsZero() {
+			result.AutoRoutes.LastSnapshot = ts
+			result.AutoRoutes.LastSnapshotAge = time.Since(ts).Round(time.Second).String()
+		}
 	}
 
 	result.RouteCount.Config = len(cfg.Routes)
@@ -1008,6 +1104,19 @@ func (s *Server) GetStatus() *api.StatusResult {
 	result.RouteCount.Total = result.RouteCount.Config + result.RouteCount.Auto
 
 	return result
+}
+
+// lastRouteSnapshot returns when the running autoroutes watcher last applied
+// a route-watch snapshot, or the zero time when no watcher is running or no
+// snapshot has arrived yet.
+func (s *Server) lastRouteSnapshot() time.Time {
+	s.servicesMu.Lock()
+	h := s.watcher
+	s.servicesMu.Unlock()
+	if h == nil || h.watcher == nil {
+		return time.Time{}
+	}
+	return h.watcher.LastSnapshot()
 }
 
 // GetRoutes returns the list of active routes with source info. Routes refused

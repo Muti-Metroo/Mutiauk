@@ -102,7 +102,7 @@ Expose: Mesh peer -> Muti Metroo agent listener -> Muti Metroo -> SOCKS5 CmdExpo
 4. Applies routes via netlink
 5. Starts the API server (Unix socket)
 6. When `admin.enabled` (default): starts the local admin HTTP interface (`internal/adminhttp`) on loopback
-7. When `autoroutes.enabled`: starts the local DNS resolver, picks a host DNS integration, and starts the autoroutes poller (which drives routes + suffixes + hosts atomically each tick)
+7. When `autoroutes.enabled`: starts the local DNS resolver, picks a host DNS integration, and starts the autoroutes route-watch watcher (which drives routes + suffixes + hosts atomically on each pushed snapshot)
 8. When `expose.enabled`: starts the expose Manager, which opens a `CmdExpose` (0x07) stream over the SOCKS5 endpoint (`socks5.server`) and registers configured forwards
 9. Handles SIGHUP for hot reload (autoroutes routes + DNS + expose forward set are all rebuilt against the new config)
 
@@ -137,7 +137,7 @@ The daemon's `applyDNSIntegration` keys a diff cache on `(listenIP, suffixes)` s
 
 **dns/hoststate_linux.go** - `ResolvectlHostState(iface)` and `NMDnsmasqHostState()` read host-side artifacts (resolvectl per-link config, the dnsmasq drop-in) for the `mutiauk dns status` diagnostic.
 
-**autoroutes/poller.go** - Periodic poll of the Muti Metroo agent dashboard. Pulls routes, host registry, and TLD suffixes; applies them atomically. Backed by `autoroutes/client.go`, which sends `Authorization: Bearer <token>` (from config or `MUTI_METROO_TOKEN` env var) when the agent has `http.token_hash` set.
+**autoroutes/watcher.go** - Route-watch stream over the SOCKS5 endpoint (`socks5.server`): the agent pushes dashboard snapshots (routes, mesh hosts, TLD suffixes) and heartbeats; each snapshot is applied atomically through the daemon's `onDashboardUpdate`. Reconnects with jittered backoff (shared `internal/backoff.Jitter`). The watcher records the last-snapshot timestamp, surfaced as `last_snapshot`/`last_snapshot_age` in the API status, the admin dashboard, and `mutiauk status`. With `autoroutes.stale_timeout` set, the daemon flushes auto routes and mesh DNS state once no snapshot has arrived for that long; by default routes ride out agent outages indefinitely.
 
 **expose/** - Publishes local services to the mesh over the SOCKS5 endpoint (the same `socks5.server` used for the data plane), via the Muti Metroo `CmdExpose` (0x07) stream. Each routing key is registered on the agent; inbound mesh forward streams for that key are piped back over the stream and served locally as either a strict static folder or a TCP forward. Authorization is the SOCKS5 handshake; no separate URL or bearer token.
 - **expose/protocol.go** - Wire format: `[u8 type][u64 stream_id][payload]`. Frame types: `REGISTER`/`REGISTER_ACK`, `UNREGISTER`/`UNREGISTER_ACK`, `OPEN`/`OPEN_ACK`, `DATA`, `CLOSE_WRITE`, `CLOSE`, `PING`/`PONG`. Only the agent opens streams (operator side is firewalled). Max payload 1 MiB per frame.
@@ -202,14 +202,14 @@ Key sections:
 - `tun`: Interface name, MTU (default 1400), IPv4/IPv6 addresses
 - `socks5`: Proxy server, auth credentials (password also via `MUTIAUK_SOCKS5_PASSWORD` env), timeouts, transport (tcp/websocket; auto-detected from `ws://`/`wss://` scheme). `keepalive` drives both TCP keepalive (tcp transport) and periodic WebSocket pings (websocket transport). WARNING: the WebSocket transport carries TCP/ICMP only; the UDP data plane always uses a raw UDP socket to the agent, so UDP (including tunneled DNS) breaks if the agent is reachable only via WebSocket
 - `routes`: Static CIDR destinations to forward through the proxy. `enabled` defaults to `true` when the YAML omits the key; the daemon emits a per-route WARN at startup so legacy configs surface in journald
-- `autoroutes`: Route/host state from a Muti Metroo agent (`source` auto|socks|dashboard; SOCKS route-watch by default, optional HTTP `url`/`token`/`MUTI_METROO_TOKEN` fallback, `poll_interval`); also gates the local DNS resolver
+- `autoroutes`: Route/host state pushed by the Muti Metroo agent over the SOCKS5 route-watch stream (`enabled`); also gates the local DNS resolver. `stale_timeout` (default off) flushes auto routes + mesh DNS state when no snapshot arrives within the timeout; the last-snapshot age is visible in `mutiauk status` and the dashboard regardless
 - `dns_integration`: `auto` (default), `resolvectl`, `nm-dnsmasq`, `etc-resolver` (macOS), `nrpt` (Windows), or `none`
 - `expose`: Publish local services to the mesh (folders or TCP forwards) over the SOCKS5 endpoint (`socks5.server`) via the `CmdExpose` stream; authorization is the SOCKS5 handshake. Knobs: `reconnect_min`/`reconnect_max` (jittered backoff), `keepalive_period`, `max_streams_per_key` (default 256), `max_buffered_bytes` (default 16 MiB), `forwards`. Forwards reload on SIGHUP; runtime add/remove via `mutiauk expose` CLI / Unix-socket API
 - `admin`: Local admin HTTP interface (browser dashboard + JSON endpoints) served by the daemon over `internal/adminhttp`. Enabled by default (`enabled` is a `*bool`: an omitted `admin:` section, or an `admin:` block with no `enabled:` key, defaults to enabled; explicit `enabled: false` disables). Loopback-only and token-authenticated: every endpoint requires the bearer token from the root-only `admin-token` file next to the config, requests must carry a loopback Host header, and POST/DELETE require `Content-Type: application/json`; `Validate` rejects any non-loopback `listen` host. `listen` defaults to `127.0.0.1:48088`, and the daemon best-effort also binds the matching `::1`/`127.0.0.1` of the other family on the same port. The interface is a thin layer over `api.StateProvider` (the daemon satisfies it), so it shares state with the Unix-socket control plane: `GET /api/status|/api/agent|/api/routes|/api/expose`, `POST /api/expose`, `DELETE /api/expose/{key}`. `mutiauk admin` prints a dashboard login URL
 - `nat`: Connection table size and timeouts
 - `logging`: Level, format, output
 
-Config files are written with mode `0600` by both `cfg.Save` and the wizard since they carry `socks5.password` and `autoroutes.token`. `mutiauk config check` warns when a hand-rolled file is group- or world-readable. Use `Config.ApplyDefaults()` (exported) before `Validate()` when constructing a Config in code; `config.Load()` calls it automatically.
+Config files are written with mode `0600` by both `cfg.Save` and the wizard since they carry `socks5.password`. `mutiauk config check` warns when a hand-rolled file is group- or world-readable. Use `Config.ApplyDefaults()` (exported) before `Validate()` when constructing a Config in code; `config.Load()` calls it automatically.
 
 ## CLI surface
 

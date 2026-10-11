@@ -29,6 +29,10 @@ type routeEventLog struct {
 // reconciliation can re-detect the same unremovable kernel route on
 // every poll, and a flood of identical lines would bury real changes.
 func (l *routeEventLog) record(action, destination, source, comment string) {
+	l.recordFull(action, destination, source, comment, "")
+}
+
+func (l *routeEventLog) recordFull(action, destination, source, comment, errText string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if n := len(l.events); n > 0 {
@@ -44,6 +48,7 @@ func (l *routeEventLog) record(action, destination, source, comment string) {
 		Destination: destination,
 		Source:      source,
 		Comment:     comment,
+		Error:       errText,
 	}
 	if len(l.events) >= routeEventCapacity {
 		l.events = append(l.events[1:], ev)
@@ -61,29 +66,42 @@ func (l *routeEventLog) snapshot() []api.RouteEvent {
 	return out
 }
 
-// recordPlan logs the add/remove changes a route Plan is about to apply.
-// autoSet/configSet classify each destination's source for display;
-// destinations in neither are labelled "manual". Destinations in skip
-// (e.g. the interface's own address route, which the kernel manages and
-// Diff perpetually flags) are not logged: they are not mutiauk
-// routing changes.
-func (l *routeEventLog) recordPlan(plan *route.Plan, autoSet, configSet, skip map[string]bool) {
-	if plan == nil {
+// recordResult logs the outcome of an applied route plan: "added"/"removed"
+// for routes the kernel actually changed, and "failed-add"/"failed-remove"
+// (with the cause in Error) for routes Apply could not install or withdraw.
+// Recording after Apply - not from the plan - keeps the feed truthful: a
+// failed apply no longer shows up as a successful change. autoSet/configSet
+// classify each destination's source for display; destinations in skip (e.g.
+// the interface's own address route, which the kernel manages and Diff
+// perpetually flags) are not logged: they are not mutiauk routing changes.
+func (l *routeEventLog) recordResult(res *route.ApplyResult, autoSet, configSet, skip map[string]bool) {
+	if res == nil {
 		return
 	}
-	for _, r := range plan.ToRemove {
+	for _, r := range res.Removed {
 		dest := destString(r)
 		if skip[dest] {
 			continue
 		}
 		l.record("removed", dest, classifyRoute(dest, r.Comment, autoSet, configSet), r.Comment)
 	}
-	for _, r := range plan.ToAdd {
+	for _, r := range res.Added {
 		dest := destString(r)
 		if skip[dest] {
 			continue
 		}
 		l.record("added", dest, classifyRoute(dest, r.Comment, autoSet, configSet), r.Comment)
+	}
+	for _, f := range res.Failed {
+		dest := destString(f.Route)
+		if skip[dest] {
+			continue
+		}
+		action := "failed-add"
+		if f.Removal {
+			action = "failed-remove"
+		}
+		l.recordFull(action, dest, classifyRoute(dest, f.Route.Comment, autoSet, configSet), f.Route.Comment, f.Err.Error())
 	}
 }
 

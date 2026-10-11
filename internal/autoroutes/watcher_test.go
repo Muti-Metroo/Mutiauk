@@ -97,6 +97,22 @@ func TestWatcher_AppliesSnapshot(t *testing.T) {
 	}
 }
 
+func TestWatcher_LastSnapshotTimestamp(t *testing.T) {
+	w := NewWatcher(nil, "tun-test", nil, zap.NewNop())
+	if !w.LastSnapshot().IsZero() {
+		t.Fatal("LastSnapshot should be zero before any snapshot")
+	}
+
+	before := time.Now()
+	if err := w.apply([]byte(`{"routes":[]}`)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	got := w.LastSnapshot()
+	if got.Before(before) || got.After(time.Now()) {
+		t.Fatalf("LastSnapshot = %v, want within [%v, now]", got, before)
+	}
+}
+
 func TestWatcher_UnsupportedReturnsErr(t *testing.T) {
 	ln := fakeSOCKSServer(t, 0x07, nil) // command not supported
 
