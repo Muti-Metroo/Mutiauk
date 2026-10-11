@@ -114,8 +114,6 @@ Expose: Mesh peer -> Muti Metroo agent listener -> Muti Metroo -> SOCKS5 CmdExpo
 
 **proxy/tcp_forwarder.go** - Implements `TCPHandler` interface. Establishes SOCKS5 CONNECT and performs bidirectional data copy. Supports `PreConnect` for accurate port scanning. The copy loop (`proxy/common.go`) propagates TCP half-close: a local FIN triggers `CloseWrite` on the mesh connection so request/response servers still deliver their in-flight reply; the WebSocket transport has no half-close semantics and falls back to a full close.
 
-**proxy/udp_forwarder.go** - Legacy UDP handler using gVisor's UDP forwarder (for local-destined packets).
-
 **proxy/raw_udp_forwarder.go** - Implements `RawUDPHandler` interface for intercepted UDP. Uses SOCKS5 UDP ASSOCIATE to relay datagrams. Maintains a pool of relay sessions (keyed by srcIP:srcPort) with TTL-based cleanup; each association owns a reader goroutine that demultiplexes response datagrams by responder address and delivers them through the reply callback, so multi-datagram responses, interleaved destinations, and one-way flows all work without blocking. A control-connection monitor (RFC 1928: the association dies with its TCP control conn) and reader exit both evict the association from the pool. Responses are written to the TUN by the stack, which truncates oversized payloads to the link MTU with a rate-limited warning.
 
 **proxy/icmp_forwarder.go** - Forwards ICMP echo requests/replies through the SOCKS5 UDP relay so `ping` works through the tunnel. Sessions are cached by (destination, echo id); session creation runs the SOCKS5 handshake outside the forwarder lock with a double-check before installing (same pattern as `RelayPool.GetOrCreate`), so a slow mesh never stalls lookups of existing sessions.
@@ -127,8 +125,6 @@ Expose: Mesh peer -> Muti Metroo agent listener -> Muti Metroo -> SOCKS5 CmdExpo
 **route/manager.go** - Linux route management via netlink. Supports idempotent add/remove, plan/diff for declarative route management, conflict detection for overlapping CIDRs.
 
 **tun/device_linux.go** - TUN device creation using `/dev/net/tun` with `TUNSETIFF` ioctl. Non-Linux platforms get a stub that returns an error.
-
-**config/watcher.go** - Hot reload via fsnotify with debouncing.
 
 **dns/server.go** - In-process DNS resolver bound to the TUN IPv4 on port 53. Started when `autoroutes.enabled` is true. Resolves names that match any of the active TLD suffixes (e.g. `.mesh`) against the agent's mesh-host registry; everything else is refused so the system resolver falls through. The autoroutes poller fetches the suffix set + host list from the agent dashboard and applies it to the DNS server atomically with each route refresh. `SetState` validates agent-supplied suffixes against the strict DNS-label charset (lowercase alnum + interior hyphens, no empty labels, max 253 chars) and drops invalid entries with a Warn, since suffixes are written into root-owned host config (dnsmasq drop-ins, `/etc/resolver` files, resolvectl argv, NRPT).
 

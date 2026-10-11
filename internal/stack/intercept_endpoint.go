@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
@@ -25,7 +24,6 @@ type ICMPPacketHandler interface {
 // interceptEndpoint wraps a link endpoint to intercept UDP and ICMP packets
 type interceptEndpoint struct {
 	stack.LinkEndpoint
-	dispatcher  stack.NetworkDispatcher
 	udpHandler  UDPPacketHandler
 	icmpHandler ICMPPacketHandler
 	tunWriter   func([]byte) (int, error)
@@ -65,7 +63,6 @@ func (e *interceptEndpoint) logFragmentDrop(protocol string, srcIP, dstIP net.IP
 
 // Attach implements stack.LinkEndpoint
 func (e *interceptEndpoint) Attach(dispatcher stack.NetworkDispatcher) {
-	e.dispatcher = dispatcher
 	// Wrap the dispatcher to intercept packets
 	e.LinkEndpoint.Attach(&interceptDispatcher{
 		NetworkDispatcher: dispatcher,
@@ -272,12 +269,6 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 
 	// Other protocols - pass to gVisor
 	d.NetworkDispatcher.DeliverNetworkPacket(protocol, pkt)
-}
-
-// WriteRawPacket writes a raw IP packet back to the TUN
-func (e *interceptEndpoint) WriteRawPacket(data []byte) error {
-	_, err := e.tunWriter(data)
-	return err
 }
 
 // isIPv6 returns true if the IP address is IPv6 (not IPv4 or IPv4-mapped IPv6).
@@ -819,14 +810,4 @@ func (e *interceptEndpoint) WritePacket(pkt *stack.PacketBuffer) tcpip.Error {
 		return &tcpip.ErrAborted{}
 	}
 	return nil
-}
-
-// InjectInbound creates a PacketBuffer from raw data and injects it
-func (e *interceptEndpoint) InjectInbound(protocol tcpip.NetworkProtocolNumber, data []byte) {
-	pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{
-		Payload: buffer.MakeWithData(data),
-	})
-	defer pkt.DecRef()
-
-	e.dispatcher.DeliverNetworkPacket(protocol, pkt)
 }

@@ -1,13 +1,10 @@
 package config
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"go.uber.org/zap"
 )
 
 func TestLoad(t *testing.T) {
@@ -848,156 +845,6 @@ func TestSaveInvalidPath(t *testing.T) {
 	err := cfg.Save("/nonexistent/directory/config.yaml")
 	if err == nil {
 		t.Error("expected error for invalid path")
-	}
-}
-
-// --- Watcher Tests ---
-
-func TestNewWatcher(t *testing.T) {
-	content := `
-tun:
-  name: tun0
-  mtu: 1400
-socks5:
-  server: 127.0.0.1:1080
-`
-	path := writeTempConfig(t, content)
-	defer os.Remove(path)
-
-	logger := zap.NewNop()
-
-	watcher, err := NewWatcher(path, logger, nil)
-	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
-	}
-	defer watcher.Close()
-
-	cfg := watcher.Get()
-	if cfg == nil {
-		t.Error("Get() returned nil")
-	}
-	if cfg.TUN.Name != "tun0" {
-		t.Errorf("TUN.Name = %v", cfg.TUN.Name)
-	}
-}
-
-func TestNewWatcherInvalidConfig(t *testing.T) {
-	_, err := NewWatcher("/nonexistent/config.yaml", zap.NewNop(), nil)
-	if err == nil {
-		t.Error("expected error for nonexistent file")
-	}
-}
-
-func TestWatcherGet(t *testing.T) {
-	content := `
-tun:
-  name: test-tun
-  mtu: 1500
-socks5:
-  server: proxy:1080
-`
-	path := writeTempConfig(t, content)
-	defer os.Remove(path)
-
-	watcher, err := NewWatcher(path, zap.NewNop(), nil)
-	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
-	}
-	defer watcher.Close()
-
-	// Get should be thread-safe
-	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
-		go func() {
-			cfg := watcher.Get()
-			if cfg.TUN.Name != "test-tun" {
-				t.Errorf("TUN.Name = %v", cfg.TUN.Name)
-			}
-			done <- true
-		}()
-	}
-
-	for i := 0; i < 10; i++ {
-		<-done
-	}
-}
-
-func TestWatcherFileChange(t *testing.T) {
-	content := `
-tun:
-  name: tun0
-  mtu: 1400
-socks5:
-  server: 127.0.0.1:1080
-`
-	path := writeTempConfig(t, content)
-	defer os.Remove(path)
-
-	reloadCalled := make(chan bool, 1)
-	onChangeFn := func(cfg *Config) error {
-		reloadCalled <- true
-		return nil
-	}
-
-	watcher, err := NewWatcher(path, zap.NewNop(), onChangeFn)
-	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
-	}
-	defer watcher.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go watcher.Watch(ctx)
-
-	// Wait a bit for watcher to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Modify the file
-	newContent := `
-tun:
-  name: tun1
-  mtu: 1500
-socks5:
-  server: 127.0.0.1:1080
-`
-	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
-		t.Fatalf("failed to write file: %v", err)
-	}
-
-	// Wait for reload with timeout
-	select {
-	case <-reloadCalled:
-		// Success
-	case <-time.After(2 * time.Second):
-		t.Error("timeout waiting for reload callback")
-	}
-
-	// Verify the config was updated
-	cfg := watcher.Get()
-	if cfg.TUN.Name != "tun1" {
-		t.Errorf("TUN.Name = %v, want tun1", cfg.TUN.Name)
-	}
-}
-
-func TestWatcherClose(t *testing.T) {
-	content := `
-tun:
-  name: tun0
-  mtu: 1400
-socks5:
-  server: 127.0.0.1:1080
-`
-	path := writeTempConfig(t, content)
-	defer os.Remove(path)
-
-	watcher, err := NewWatcher(path, zap.NewNop(), nil)
-	if err != nil {
-		t.Fatalf("NewWatcher() error = %v", err)
-	}
-
-	if err := watcher.Close(); err != nil {
-		t.Errorf("Close() error = %v", err)
 	}
 }
 

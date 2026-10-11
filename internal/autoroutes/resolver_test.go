@@ -257,36 +257,6 @@ func TestMergeRoutes_ConfigPreserved(t *testing.T) {
 	}
 }
 
-func TestRouteContains(t *testing.T) {
-	tests := []struct {
-		a, b     string
-		contains bool
-	}{
-		{"10.0.0.0/8", "10.10.0.0/16", true},
-		{"10.0.0.0/8", "10.0.0.0/8", true},
-		{"10.10.0.0/16", "10.0.0.0/8", false},
-		{"10.10.0.0/16", "10.11.0.0/16", false},
-		{"192.168.0.0/16", "10.10.0.0/16", false},
-		// IPv6
-		{"2001:db8::/32", "2001:db8:1::/48", true},
-		{"2001:db8:1::/48", "2001:db8::/32", false},
-		// Different families
-		{"10.0.0.0/8", "2001:db8::/32", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.a+"_contains_"+tt.b, func(t *testing.T) {
-			a := mustParseCIDR(tt.a)
-			b := mustParseCIDR(tt.b)
-
-			result := routeContains(a, b)
-			if result != tt.contains {
-				t.Errorf("routeContains(%s, %s) = %v, want %v", tt.a, tt.b, result, tt.contains)
-			}
-		})
-	}
-}
-
 func TestExtractOriginID(t *testing.T) {
 	tests := []struct {
 		name    string

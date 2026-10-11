@@ -419,12 +419,6 @@ func (m *mockTCPPreConnector) PreConnect(ctx context.Context, srcAddr, dstAddr n
 	return nil, nil
 }
 
-type mockUDPHandler struct{}
-
-func (m *mockUDPHandler) HandleUDP(ctx context.Context, conn net.PacketConn, srcAddr, dstAddr net.Addr) error {
-	return nil
-}
-
 type mockRawUDPHandler struct{}
 
 func (m *mockRawUDPHandler) HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte, reply UDPReplyFunc) error {
@@ -446,10 +440,6 @@ func TestInterfaces_TCPPreConnector(t *testing.T) {
 	if !ok {
 		t.Error("mockTCPPreConnector should implement TCPPreConnector")
 	}
-}
-
-func TestInterfaces_UDPHandler(t *testing.T) {
-	var _ UDPHandler = &mockUDPHandler{}
 }
 
 func TestInterfaces_RawUDPHandler(t *testing.T) {
@@ -534,47 +524,10 @@ func TestNewInterceptEndpoint(t *testing.T) {
 	}
 }
 
-func TestInterceptEndpoint_WriteRawPacket(t *testing.T) {
-	var writtenData []byte
-	tunWriter := func(data []byte) (int, error) {
-		writtenData = make([]byte, len(data))
-		copy(writtenData, data)
-		return len(data), nil
-	}
-
-	ep := newInterceptEndpoint(nil, nil, nil, tunWriter, zap.NewNop())
-
-	testData := []byte("test packet data")
-	err := ep.WriteRawPacket(testData)
-
-	if err != nil {
-		t.Errorf("WriteRawPacket error = %v", err)
-	}
-	if string(writtenData) != string(testData) {
-		t.Errorf("written data = %q, want %q", writtenData, testData)
-	}
-}
-
-func TestInterceptEndpoint_WriteRawPacket_Error(t *testing.T) {
-	expectedErr := net.ErrClosed
-	tunWriter := func(data []byte) (int, error) {
-		return 0, expectedErr
-	}
-
-	ep := newInterceptEndpoint(nil, nil, nil, tunWriter, zap.NewNop())
-
-	err := ep.WriteRawPacket([]byte("test"))
-
-	if err != expectedErr {
-		t.Errorf("WriteRawPacket error = %v, want %v", err, expectedErr)
-	}
-}
-
 // --- Config with Handlers Tests ---
 
 func TestConfig_WithHandlers(t *testing.T) {
 	tcpHandler := &mockTCPHandler{}
-	udpHandler := &mockUDPHandler{}
 	rawUDPHandler := &mockRawUDPHandler{}
 
 	cfg := Config{
@@ -582,16 +535,12 @@ func TestConfig_WithHandlers(t *testing.T) {
 		IPv4Addr:      net.ParseIP("10.200.200.1"),
 		IPv4Mask:      net.CIDRMask(24, 32),
 		TCPHandler:    tcpHandler,
-		UDPHandler:    udpHandler,
 		RawUDPHandler: rawUDPHandler,
 		Logger:        zap.NewNop(),
 	}
 
 	if cfg.TCPHandler == nil {
 		t.Error("TCPHandler should not be nil")
-	}
-	if cfg.UDPHandler == nil {
-		t.Error("UDPHandler should not be nil")
 	}
 	if cfg.RawUDPHandler == nil {
 		t.Error("RawUDPHandler should not be nil")

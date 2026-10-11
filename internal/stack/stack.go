@@ -38,12 +38,6 @@ type TCPPendingCleaner interface {
 	CleanupPending(srcAddr, dstAddr net.Addr)
 }
 
-// UDPHandler handles UDP packets
-// UDPHandler handles UDP packets (old interface, kept for compatibility)
-type UDPHandler interface {
-	HandleUDP(ctx context.Context, conn net.PacketConn, srcAddr, dstAddr net.Addr) error
-}
-
 // UDPReplyFunc delivers a UDP payload back to the local client through the
 // TUN device. responderIP/responderPort identify the actual responder (read
 // from the relay's datagram header), clientIP/clientPort the original local
@@ -84,8 +78,7 @@ type Config struct {
 	IPv6Addr      net.IP
 	IPv6Mask      net.IPMask
 	TCPHandler    TCPHandler
-	UDPHandler    UDPHandler    // Old interface
-	RawUDPHandler RawUDPHandler // New interface for intercepted UDP
+	RawUDPHandler RawUDPHandler // Handler for link-layer intercepted UDP
 	ICMPHandler   ICMPHandler   // ICMP echo handler
 	// ICMPErrorReplies, when true, makes HandleICMPPacket reply to the local
 	// sender with an ICMP Destination Unreachable when an echo cannot be

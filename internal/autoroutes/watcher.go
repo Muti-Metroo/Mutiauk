@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"time"
 
+	"github.com/postalsys/mutiauk/internal/backoff"
 	"github.com/postalsys/mutiauk/internal/route"
 	"github.com/postalsys/mutiauk/internal/socks5"
 	"go.uber.org/zap"
@@ -62,7 +62,7 @@ func NewWatcher(client *socks5.Client, tunName string, onUpdate DashboardCallbac
 // errors are handled internally with reconnect backoff and Run only returns on
 // context cancellation.
 func (w *Watcher) Run(ctx context.Context) error {
-	backoff := watcherReconnectMin
+	backoffDur := watcherReconnectMin
 	everConnected := false
 
 	for {
@@ -83,24 +83,24 @@ func (w *Watcher) Run(ctx context.Context) error {
 		if connected {
 			// A working session ended; reset backoff so a transient drop
 			// reconnects promptly.
-			backoff = watcherReconnectMin
+			backoffDur = watcherReconnectMin
 		}
 		if err != nil {
 			w.logger.Warn("route-watch session ended",
-				zap.Error(err), zap.Duration("retry_in", backoff))
+				zap.Error(err), zap.Duration("retry_in", backoffDur))
 		} else {
 			w.logger.Debug("route-watch session ended; reconnecting",
-				zap.Duration("retry_in", backoff))
+				zap.Duration("retry_in", backoffDur))
 		}
 
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(jitterDuration(backoff)):
+		case <-time.After(backoff.Jitter(backoffDur)):
 		}
-		backoff *= 2
-		if backoff > watcherReconnectMax {
-			backoff = watcherReconnectMax
+		backoffDur *= 2
+		if backoffDur > watcherReconnectMax {
+			backoffDur = watcherReconnectMax
 		}
 	}
 }
@@ -161,18 +161,4 @@ func (w *Watcher) apply(payload []byte) error {
 		w.onUpdate(routes, suffixes, hosts)
 	}
 	return nil
-}
-
-// jitterDuration returns d +/- 25%, with a 100ms floor, to spread reconnects.
-func jitterDuration(d time.Duration) time.Duration {
-	if d <= 0 {
-		return d
-	}
-	half := int64(d / 4)
-	delta := rand.Int63n(2*half+1) - half
-	out := time.Duration(int64(d) + delta)
-	if out < 100*time.Millisecond {
-		out = 100 * time.Millisecond
-	}
-	return out
 }

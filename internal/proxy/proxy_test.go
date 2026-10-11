@@ -296,77 +296,6 @@ func TestBidirectionalCopy_ContextCancel(t *testing.T) {
 	}
 }
 
-// --- UDPForwarder Tests ---
-
-func TestNewUDPForwarder(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-	natTable := nat.NewTable(nat.DefaultConfig())
-
-	forwarder := NewUDPForwarder(client, natTable, logger)
-
-	if forwarder == nil {
-		t.Fatal("NewUDPForwarder returned nil")
-	}
-	if forwarder.clientHolder.Get() != client {
-		t.Error("client not set correctly")
-	}
-	if forwarder.natTable != natTable {
-		t.Error("natTable not set correctly")
-	}
-	if forwarder.bufferSize != DefaultUDPBufferSize {
-		t.Errorf("bufferSize = %d, want 65535", forwarder.bufferSize)
-	}
-	if forwarder.relayTTL() != 5*time.Minute {
-		t.Errorf("relayTTL = %v, want 5m", forwarder.relayTTL())
-	}
-	if forwarder.relayPool == nil {
-		t.Error("relayPool not initialized")
-	}
-
-	forwarder.Close()
-}
-
-func TestUDPForwarder_UpdateClient(t *testing.T) {
-	logger := zap.NewNop()
-	client1 := &socks5.Client{}
-	client2 := &socks5.Client{}
-	natTable := nat.NewTable(nat.DefaultConfig())
-
-	forwarder := NewUDPForwarder(client1, natTable, logger)
-	defer forwarder.Close()
-
-	forwarder.UpdateClient(client2)
-
-	if forwarder.clientHolder.Get() != client2 {
-		t.Error("client not updated correctly")
-	}
-}
-
-func TestUDPForwarder_Close(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-	natTable := nat.NewTable(nat.DefaultConfig())
-
-	forwarder := NewUDPForwarder(client, natTable, logger)
-
-	// Close should not panic
-	forwarder.Close()
-}
-
-func TestUDPForwarder_Close_Multiple(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-	natTable := nat.NewTable(nat.DefaultConfig())
-
-	forwarder := NewUDPForwarder(client, natTable, logger)
-
-	// Multiple closes should not panic
-	forwarder.Close()
-	forwarder.Close()
-	forwarder.Close()
-}
-
 // --- RawUDPForwarder Tests ---
 
 func TestNewRawUDPForwarder(t *testing.T) {
@@ -515,28 +444,6 @@ func TestTCPForwarder_ConcurrentUpdateClient(t *testing.T) {
 	wg.Wait()
 }
 
-func TestUDPForwarder_ConcurrentOperations(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-	natTable := nat.NewTable(nat.DefaultConfig())
-	forwarder := NewUDPForwarder(client, natTable, logger)
-	defer forwarder.Close()
-
-	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			forwarder.UpdateClient(&socks5.Client{})
-		}()
-		go func() {
-			defer wg.Done()
-			_ = forwarder.clientHolder.Get()
-		}()
-	}
-	wg.Wait()
-}
-
 func TestRawUDPForwarder_ConcurrentOperations(t *testing.T) {
 	logger := zap.NewNop()
 	client := &socks5.Client{}
@@ -640,34 +547,7 @@ func TestTCPForwarder_BufferSize(t *testing.T) {
 	}
 }
 
-func TestUDPForwarder_BufferSize(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-	natTable := nat.NewTable(nat.DefaultConfig())
-
-	forwarder := NewUDPForwarder(client, natTable, logger)
-	defer forwarder.Close()
-
-	if forwarder.bufferSize != DefaultUDPBufferSize {
-		t.Errorf("bufferSize = %d, want %d", forwarder.bufferSize, DefaultUDPBufferSize)
-	}
-}
-
 // --- TTL Tests ---
-
-func TestUDPForwarder_RelayTTL(t *testing.T) {
-	logger := zap.NewNop()
-	client := &socks5.Client{}
-	natTable := nat.NewTable(nat.DefaultConfig())
-
-	forwarder := NewUDPForwarder(client, natTable, logger)
-	defer forwarder.Close()
-
-	expectedTTL := 5 * time.Minute
-	if forwarder.relayTTL() != expectedTTL {
-		t.Errorf("relayTTL = %v, want %v", forwarder.relayTTL(), expectedTTL)
-	}
-}
 
 func TestRawUDPForwarder_RelayTTL(t *testing.T) {
 	logger := zap.NewNop()

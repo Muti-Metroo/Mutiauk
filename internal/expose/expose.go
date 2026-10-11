@@ -3,11 +3,11 @@ package expose
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/postalsys/mutiauk/internal/backoff"
 	"github.com/postalsys/mutiauk/internal/config"
 	"github.com/postalsys/mutiauk/internal/socks5"
 	"go.uber.org/zap"
@@ -377,7 +377,7 @@ func (m *Manager) run(ctx context.Context) {
 		m.logger.Debug("expose: disabled; manager idle")
 		return
 	}
-	backoff := minBackoff
+	backoffDur := minBackoff
 	for {
 		if ctx.Err() != nil {
 			return
@@ -388,23 +388,23 @@ func (m *Manager) run(ctx context.Context) {
 		}
 		if err != nil {
 			m.setLastError(err.Error())
-			m.logger.Warn("expose: session ended", zap.Error(err), zap.Duration("retry_in", backoff))
+			m.logger.Warn("expose: session ended", zap.Error(err), zap.Duration("retry_in", backoffDur))
 		} else {
 			// A session that ran cleanly did connect; reconnect promptly
 			// instead of riding whatever backoff earlier failures accrued.
-			backoff = minBackoff
-			m.logger.Info("expose: session ended; reconnecting", zap.Duration("retry_in", backoff))
+			backoffDur = minBackoff
+			m.logger.Info("expose: session ended; reconnecting", zap.Duration("retry_in", backoffDur))
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(jitter(backoff)):
+		case <-time.After(backoff.Jitter(backoffDur)):
 		}
 		// Only failed attempts escalate the backoff.
 		if err != nil {
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
+			backoffDur *= 2
+			if backoffDur > maxBackoff {
+				backoffDur = maxBackoff
 			}
 		}
 	}
@@ -475,19 +475,4 @@ func (m *Manager) setLastError(s string) {
 	m.mu.Lock()
 	m.lastErr = s
 	m.mu.Unlock()
-}
-
-// jitter returns d +/- 25% to spread reconnects across multiple
-// clients sharing the same agent.
-func jitter(d time.Duration) time.Duration {
-	if d <= 0 {
-		return d
-	}
-	half := int64(d / 4)
-	delta := rand.Int63n(2*half+1) - half
-	out := time.Duration(int64(d) + delta)
-	if out < 100*time.Millisecond {
-		out = 100 * time.Millisecond
-	}
-	return out
 }

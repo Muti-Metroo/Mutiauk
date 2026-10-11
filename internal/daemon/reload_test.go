@@ -38,7 +38,6 @@ func stubNetwork(t *testing.T, s *Server) {
 	s.network.natTable = natTable
 	s.network.socks5Client = s.createSOCKS5Client(s.cfg.Load())
 	s.network.tcpForwarder = proxy.NewTCPForwarder(s.network.socks5Client, natTable, logger)
-	s.network.udpForwarder = proxy.NewUDPForwarder(s.network.socks5Client, natTable, logger)
 	s.network.rawUDPForwarder = proxy.NewRawUDPForwarder(s.network.socks5Client, logger)
 	s.network.icmpForwarder = proxy.NewICMPForwarder(s.network.socks5Client, logger, time.Second)
 	mgr, err := route.NewManager(s.cfg.Load().TUN.Name, logger)

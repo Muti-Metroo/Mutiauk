@@ -187,6 +187,9 @@ StateDirectory=mutiauk
 
 # Capabilities: CAP_NET_ADMIN/RAW for TUN + netlink, CAP_NET_BIND_SERVICE
 # so the in-process resolver can bind UDP/TCP port 53 on the TUN address.
+# The unit runs as root, so only CapabilityBoundingSet has an effect today;
+# AmbientCapabilities is deliberately narrower and would matter only if a
+# User= directive were ever introduced (ambient sets are cleared for root).
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 

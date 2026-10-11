@@ -20,6 +20,10 @@ var udpBufPool = sync.Pool{
 	},
 }
 
+// defaultRelayTTL is how long an idle UDP relay association is kept in the
+// pool before the cleanup loop evicts it.
+const defaultRelayTTL = 5 * time.Minute
+
 // RawUDPForwarder forwards raw UDP packets through SOCKS5 UDP associations.
 //
 // Each association (keyed by the local srcIP:srcPort, preserving SOCKS5 UDP

@@ -190,29 +190,6 @@ func flushDNSCache(logger *zap.Logger) {
 	}
 }
 
-// writeFileAtomic writes data via a temp file + rename within the same
-// directory so concurrent readers never see a partial file.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".mutiauk.*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
-}
-
 // The resolvectl and nm-dnsmasq backends are Linux-only; these report
 // unavailable on macOS so DetectIntegration never selects them.
 

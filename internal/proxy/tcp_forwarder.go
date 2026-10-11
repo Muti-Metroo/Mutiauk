@@ -83,13 +83,6 @@ func (f *TCPForwarder) HandleTCP(ctx context.Context, conn net.Conn, srcAddr, ds
 	srcAddrPort := netip.MustParseAddrPort(srcTCP.String())
 	dstAddrPort := netip.MustParseAddrPort(dstTCP.String())
 
-	if entry, exists := f.natTable.Lookup("tcp", srcAddrPort, dstAddrPort); exists && entry.ProxyConn != nil {
-		f.logger.Debug("using existing NAT entry",
-			zap.String("src", srcAddr.String()),
-			zap.String("dst", dstAddr.String()),
-		)
-	}
-
 	key := connKey(srcAddr, dstAddr)
 	var proxyConn net.Conn
 

@@ -66,7 +66,6 @@ type networkStack struct {
 	natTable        *nat.Table
 	socks5Client    *socks5.Client
 	tcpForwarder    *proxy.TCPForwarder
-	udpForwarder    *proxy.UDPForwarder
 	rawUDPForwarder *proxy.RawUDPForwarder
 	icmpForwarder   *proxy.ICMPForwarder
 }
@@ -365,14 +364,12 @@ func (s *Server) initNetwork(cfg *config.Config, tunCfg tun.Config) error {
 
 	s.network.socks5Client = s.createSOCKS5Client(cfg)
 	s.network.tcpForwarder = proxy.NewTCPForwarder(s.network.socks5Client, s.network.natTable, s.logger)
-	s.network.udpForwarder = proxy.NewUDPForwarder(s.network.socks5Client, s.network.natTable, s.logger)
 	s.network.rawUDPForwarder = proxy.NewRawUDPForwarder(s.network.socks5Client, s.logger)
 	s.network.icmpForwarder = proxy.NewICMPForwarder(s.network.socks5Client, s.logger, cfg.SOCKS5.Timeout)
 
 	stackCfg := stack.Config{
 		MTU:              cfg.TUN.MTU,
 		TCPHandler:       s.network.tcpForwarder,
-		UDPHandler:       s.network.udpForwarder,
 		RawUDPHandler:    s.network.rawUDPForwarder,
 		ICMPHandler:      s.network.icmpForwarder,
 		ICMPErrorReplies: cfg.ICMP.EmitUnreachable(),
@@ -846,7 +843,6 @@ func (s *Server) Reload(cfg *config.Config) error {
 	if s.socks5ConfigChanged(oldCfg, cfg) {
 		s.network.socks5Client = s.createSOCKS5Client(cfg)
 		s.network.tcpForwarder.UpdateClient(s.network.socks5Client)
-		s.network.udpForwarder.UpdateClient(s.network.socks5Client)
 		s.network.rawUDPForwarder.UpdateClient(s.network.socks5Client)
 		s.network.icmpForwarder.UpdateClient(s.network.socks5Client)
 		s.logger.Info("SOCKS5 client updated", zap.String("server", cfg.SOCKS5.Server))

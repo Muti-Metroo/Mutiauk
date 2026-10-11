@@ -1,7 +1,6 @@
 package autoroutes
 
 import (
-	"net"
 	"sort"
 	"strings"
 
@@ -88,23 +87,4 @@ func extractOriginID(r route.Route) string {
 		return strings.TrimPrefix(r.Comment, "autoroute:")
 	}
 	return ""
-}
-
-// routeContains checks if network a completely contains network b
-func routeContains(a, b *net.IPNet) bool {
-	aOnes, aBits := a.Mask.Size()
-	bOnes, bBits := b.Mask.Size()
-
-	// Must be same IP family
-	if aBits != bBits {
-		return false
-	}
-
-	// a must be less specific (smaller prefix) to contain b
-	if aOnes > bOnes {
-		return false
-	}
-
-	// b's network must be within a
-	return a.Contains(b.IP)
 }
