@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.4](https://github.com/Muti-Metroo/Mutiauk/compare/mutiauk-v0.5.3...mutiauk-v0.5.4) (2026-10-11)
+
+
+### Miscellaneous Chores
+
+* update repository references to Muti-Metroo org ([bd93f1d](https://github.com/Muti-Metroo/Mutiauk/commit/bd93f1d6c48ff29659dcc4c9515ab8dfb9930dfa))
+
 ## [0.5.3](https://github.com/postalsys/Mutiauk/compare/mutiauk-v0.5.2...mutiauk-v0.5.3) (2026-10-11)
 
 
