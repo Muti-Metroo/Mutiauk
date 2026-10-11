@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.5](https://github.com/Muti-Metroo/Mutiauk/compare/mutiauk-v0.5.4...mutiauk-v0.5.5) (2026-10-11)
+
+
+### Miscellaneous Chores
+
+* re-cut release on consolidated history ([f5fb8cd](https://github.com/Muti-Metroo/Mutiauk/commit/f5fb8cd2f91c2ae5c8ab9f100b457eaab9969de4))
+
 ## [0.5.4](https://github.com/Muti-Metroo/Mutiauk/compare/mutiauk-v0.5.3...mutiauk-v0.5.4) (2026-10-11)
 
 
