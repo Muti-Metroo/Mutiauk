@@ -202,7 +202,7 @@ type Handler interface {
 Config file: YAML format, see `configs/mutiauk.example.yaml`
 
 Key sections:
-- `daemon`: PID file, API socket path, optional health port, `status_probe_target` (host:port that `mutiauk status` opens through the SOCKS5 tunnel; default `example.com:80`, override for air-gapped networks)
+- `daemon`: PID file, API socket path, optional health port, `status_probe_target` (host:port that `mutiauk status` opens through the SOCKS5 tunnel; default `example.com:80`, override for air-gapped networks). The daemon holds an exclusive kernel lock (flock / LockFileEx) on the PID file for its whole lifetime as a single-instance guard; a second `daemon start` is refused while the lock is held
 - `tun`: Interface name, MTU (default 1400), IPv4/IPv6 addresses
 - `socks5`: Proxy server, auth credentials (password also via `MUTIAUK_SOCKS5_PASSWORD` env), timeouts, transport (tcp/websocket; auto-detected from `ws://`/`wss://` scheme). `keepalive` drives both TCP keepalive (tcp transport) and periodic WebSocket pings (websocket transport). WARNING: the WebSocket transport carries TCP/ICMP only; the UDP data plane always uses a raw UDP socket to the agent, so UDP (including tunneled DNS) breaks if the agent is reachable only via WebSocket
 - `routes`: Static CIDR destinations to forward through the proxy. `enabled` defaults to `true` when the YAML omits the key; the daemon emits a per-route WARN at startup so legacy configs surface in journald

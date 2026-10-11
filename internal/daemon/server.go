@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -161,10 +160,18 @@ func (s *Server) Run(ctx context.Context) error {
 	s.cancelFn = cancel
 	defer cancel()
 
-	if err := s.writePIDFile(); err != nil {
-		return fmt.Errorf("failed to write PID file: %w", err)
+	// Single-instance guard: lock the PID file for the daemon's lifetime.
+	// A second daemon refuses to start instead of overwriting the PID file,
+	// stealing the API socket, and fighting over host DNS state. The lock
+	// write doubles as writePIDFile.
+	lock, err := acquireInstanceLock(s.cfg.Load().Daemon.PIDFile)
+	if err != nil {
+		return err
 	}
+	// Release runs before removePIDFile (LIFO) so the file is closed -
+	// required on Windows, where an open locked file cannot be deleted.
 	defer s.removePIDFile()
+	defer lock.Release()
 
 	if err := s.initialize(); err != nil {
 		// Roll back whatever initialize managed to create (TUN device,
@@ -954,19 +961,6 @@ func (s *Server) ReloadConfig() error { return s.ReloadFromDisk() }
 // Run's deferred teardown (PID file removal, TUN/route/DNS cleanup).
 func (s *Server) RequestStop() error { return s.Stop() }
 
-// writePIDFile writes the PID to a file, creating the parent directory
-// if needed (a fresh install may not have it yet, e.g. on Windows).
-func (s *Server) writePIDFile() error {
-	pid := os.Getpid()
-	path := s.cfg.Load().Daemon.PIDFile
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("failed to create PID file directory %s: %w", dir, err)
-		}
-	}
-	return os.WriteFile(path, []byte(strconv.Itoa(pid)), 0644)
-}
-
 // removePIDFile removes the PID file
 func (s *Server) removePIDFile() {
 	os.Remove(s.cfg.Load().Daemon.PIDFile)
@@ -978,7 +972,7 @@ func ReadPIDFile(path string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return strconv.Atoi(string(data))
+	return strconv.Atoi(strings.TrimSpace(string(data)))
 }
 
 // StateProvider interface implementation for API server
