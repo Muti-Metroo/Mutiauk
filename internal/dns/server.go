@@ -76,7 +76,7 @@ func New(cfg Config) (*Server, error) {
 // suffix slice it now holds. Hosts whose name doesn't end in any
 // active suffix are dropped with a warning.
 func (s *Server) SetState(suffixes []string, hosts []Host) []string {
-	cleanSuffixes := normalizeSuffixes(suffixes)
+	cleanSuffixes := s.normalizeSuffixes(suffixes)
 
 	next := make(map[string]Host, len(hosts))
 	for _, h := range hosts {
@@ -114,13 +114,24 @@ func canonName(name string) string {
 
 // normalizeSuffixes lowercases, trims surrounding whitespace and
 // dots, drops empty entries, and returns a sorted, deduplicated
-// slice. Multi-label suffixes (e.g. "muti-metroo.alt") are preserved as-is.
-func normalizeSuffixes(in []string) []string {
+// slice. Multi-label suffixes (e.g. "muti-metroo.alt") are preserved.
+// Entries that are not valid DNS names are dropped with a warning:
+// suffixes arrive from the Muti Metroo agent and are written into
+// root-owned system configuration (dnsmasq drop-ins, /etc/resolver
+// files, resolvectl argv, NRPT), so anything outside the strict DNS
+// charset is a config-injection or path-traversal vector.
+func (s *Server) normalizeSuffixes(in []string) []string {
 	out := make([]string, 0, len(in))
 	seen := make(map[string]struct{}, len(in))
 	for _, suf := range in {
 		v := strings.ToLower(strings.Trim(strings.TrimSpace(suf), "."))
 		if v == "" {
+			continue
+		}
+		if !isValidSuffix(v) {
+			s.logger.Warn("dropping invalid mesh DNS suffix",
+				zap.String("suffix", suf),
+			)
 			continue
 		}
 		if _, ok := seen[v]; ok {
@@ -131,6 +142,41 @@ func normalizeSuffixes(in []string) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// isValidSuffix reports whether s is a syntactically valid DNS suffix:
+// at most 253 chars, built from non-empty labels of at most 63 chars
+// each, every label lowercase alphanumeric with interior hyphens only
+// (no leading/trailing hyphen). An empty label rejects "..", a leading
+// or trailing dot, and any path separator or whitespace automatically.
+func isValidSuffix(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if !isValidDNSLabel(label) {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidDNSLabel reports whether label matches [a-z0-9] with interior
+// hyphens allowed, 1-63 chars.
+func isValidDNSLabel(label string) bool {
+	if label == "" || len(label) > 63 {
+		return false
+	}
+	if label[0] == '-' || label[len(label)-1] == '-' {
+		return false
+	}
+	for i := 0; i < len(label); i++ {
+		c := label[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // HostCount returns the number of registered mesh hosts.

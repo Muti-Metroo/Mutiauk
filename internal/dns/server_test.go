@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -320,6 +321,53 @@ func TestServer_NormalizeSuffixesDedupsAndSorts(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("got[%d]=%q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+// TestServer_NormalizeSuffixesRejectsInvalid is the security guard for
+// agent-supplied suffixes: they are interpolated into dnsmasq drop-in
+// lines and become /etc/resolver file names, so anything outside the
+// strict DNS charset (config-line injection, path traversal) must be
+// dropped, while valid single- and multi-label suffixes pass.
+func TestServer_NormalizeSuffixesRejectsInvalid(t *testing.T) {
+	s, err := New(Config{Logger: zap.NewNop()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	malicious := []string{
+		"mesh\nserver=/#/6.6.6.6", // dnsmasq config-line injection
+		"mesh\r\nserver=/#/6.6.6.6",
+		"a/../../b",  // /etc/resolver path traversal
+		"../etc",     // path traversal
+		"a/b",        // path separator
+		"ev il",      // interior space
+		"semi;colon", // shell/dnsmasq metachar
+		"quote\"x",
+		"back\\slash",
+		"-leading-hyphen",
+		"trailing-hyphen-",
+		"double..dot",
+		"under_score",
+		strings.Repeat("a", 254),           // over 253 chars total
+		strings.Repeat("a", 64) + ".mesh",  // label over 63 chars
+	}
+	for _, suf := range malicious {
+		if got := s.SetState([]string{suf}, nil); len(got) != 0 {
+			t.Errorf("suffix %q: expected rejection, got %v", suf, got)
+		}
+	}
+
+	valid := []string{"mesh", "muti-metroo.alt", "a.b.c", "x1", "0-9-0"}
+	got := s.SetState(valid, nil)
+	if len(got) != len(valid) {
+		t.Errorf("valid suffixes dropped: got %v, want all of %v", got, valid)
+	}
+
+	// A mix keeps the valid entries and drops the malicious ones.
+	got = s.SetState([]string{"mesh", "a/../../b", "alt"}, nil)
+	if len(got) != 2 || got[0] != "alt" || got[1] != "mesh" {
+		t.Errorf("mixed input: got %v, want [alt mesh]", got)
 	}
 }
 

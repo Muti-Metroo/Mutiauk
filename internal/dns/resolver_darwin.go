@@ -89,6 +89,13 @@ func (e *etcResolverIntegration) Revert() error {
 // file that we do not own.
 func (e *etcResolverIntegration) writeResolverFile(tld string) error {
 	path := filepath.Join(etcResolverDir, tld)
+	// Defense in depth: suffixes are validated upstream in SetState, but a
+	// tld containing path separators would let filepath.Join escape the
+	// resolver dir (e.g. "a/../../b" cleans to a path outside it), turning
+	// this write into an arbitrary root-owned file write.
+	if filepath.Dir(path) != filepath.Clean(etcResolverDir) {
+		return fmt.Errorf("etc-resolver: refusing to write outside %s: %q", etcResolverDir, tld)
+	}
 	if existing, err := os.ReadFile(path); err == nil && !isManagedResolver(existing) {
 		return fmt.Errorf("etc-resolver: %s exists and is not managed by Mutiauk", path)
 	}

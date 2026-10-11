@@ -111,6 +111,24 @@ func TestEtcResolver_Name(t *testing.T) {
 	}
 }
 
+// TestEtcResolver_RefusesPathTraversal guards the defense-in-depth check in
+// writeResolverFile: even if a malicious suffix somehow reaches the
+// integration layer, the resolved path must stay inside the resolver dir.
+func TestEtcResolver_RefusesPathTraversal(t *testing.T) {
+	dir := withTempResolverDir(t)
+	ig := newEtcResolverIntegration("10.200.200.1", zap.NewNop())
+
+	outside := filepath.Join(dir, "..", "escaped")
+	for _, tld := range []string{"a/../../escaped", "sub/dir"} {
+		if err := ig.Apply([]string{tld}); err == nil {
+			t.Errorf("Apply(%q): expected refusal, got nil error", tld)
+		}
+	}
+	if _, err := os.Stat(filepath.Clean(outside)); !os.IsNotExist(err) {
+		t.Error("traversal attempt created a file outside the resolver dir")
+	}
+}
+
 func TestEtcResolverHostState(t *testing.T) {
 	withTempResolverDir(t)
 	ig := newEtcResolverIntegration("10.200.200.1", zap.NewNop())
