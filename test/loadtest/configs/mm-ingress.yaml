@@ -28,7 +28,7 @@ http:
   address: ":8080"
   dashboard: true
 
-mesh_hosts_suffix: "mesh"
+mesh_hosts_suffixes: ["mesh"]
 mesh_hosts:
   - name: "echo-server.mesh"
     ipv4: "172.31.0.100"
