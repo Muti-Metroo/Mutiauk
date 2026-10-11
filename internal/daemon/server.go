@@ -90,7 +90,13 @@ type Server struct {
 	apiServer   *api.Server
 	adminServer *adminhttp.Server
 	exposeMgr   *expose.Manager
-	dnsServer   *meshdns.Server
+	// dnsMu guards dnsServer, dnsListenIP and dnsIntegration. The DNS
+	// server can (re)start after startup - the route-watch callback retries
+	// a failed start - so these fields are written past initialize().
+	dnsMu          sync.RWMutex
+	dnsServer      *meshdns.Server
+	dnsListenIP    string
+	dnsIntegration meshdns.Integration
 
 	// servicesMu guards servicesCtx and watcher.
 	servicesMu  sync.Mutex
@@ -112,10 +118,6 @@ type Server struct {
 	refusedMu     sync.Mutex
 	refused       []api.RefusedRoute
 	refusedLogged map[string]bool
-	// dnsListenIP is the IP the resolver listens on, cached at
-	// startDNS so per-poll integration calls don't re-parse cfg.
-	dnsListenIP    string
-	dnsIntegration meshdns.Integration
 
 	appliedMu sync.Mutex
 	applied   appliedDNSState // last-applied state; closes the diff cache
@@ -165,6 +167,10 @@ func (s *Server) Run(ctx context.Context) error {
 	defer s.removePIDFile()
 
 	if err := s.initialize(); err != nil {
+		// Roll back whatever initialize managed to create (TUN device,
+		// stack, forwarders) so a partial init does not leak resources.
+		// cleanup nil-checks every component.
+		s.cleanup()
 		return fmt.Errorf("initialization failed: %w", err)
 	}
 	defer s.cleanup()
@@ -412,18 +418,21 @@ func (s *Server) cleanup() {
 	}
 	s.servicesMu.Unlock()
 
-	if s.dnsIntegration != nil {
+	// Serialize the teardown Revert against a concurrent autoroutes Apply
+	// via appliedMu, held for the whole check+revert.
+	_, _, dnsIntegration := s.dnsState()
+	if dnsIntegration != nil {
 		s.appliedMu.Lock()
 		hadApplied := s.applied.listenIP != "" || len(s.applied.suffixes) > 0
-		s.appliedMu.Unlock()
 		if hadApplied {
-			if err := s.dnsIntegration.Revert(); err != nil {
+			if err := dnsIntegration.Revert(); err != nil {
 				s.logger.Warn("dns integration revert failed",
 					zap.Error(err),
-					zap.String("integration", s.dnsIntegration.Name()),
+					zap.String("integration", dnsIntegration.Name()),
 				)
 			}
 		}
+		s.appliedMu.Unlock()
 	}
 	if s.exposeMgr != nil {
 		s.exposeMgr.Stop()
@@ -548,14 +557,51 @@ func (s *Server) startDNS(ctx context.Context) error {
 		return fmt.Errorf("dns listen on %s: %w", addr, err)
 	}
 
+	s.dnsMu.Lock()
 	s.dnsServer = srv
 	s.dnsListenIP = listenIP
 	s.dnsIntegration = integration
+	s.dnsMu.Unlock()
 	s.logger.Info("mesh DNS server started",
 		zap.String("addr", addr),
 		zap.String("integration", integration.Name()),
 	)
 	return nil
+}
+
+// dnsState returns the current mesh DNS server, its listen IP, and the
+// selected host integration under dnsMu.
+func (s *Server) dnsState() (*meshdns.Server, string, meshdns.Integration) {
+	s.dnsMu.RLock()
+	defer s.dnsMu.RUnlock()
+	return s.dnsServer, s.dnsListenIP, s.dnsIntegration
+}
+
+// retryStartDNS restarts the mesh DNS server when it is not running, e.g.
+// because the initial bind failed at startup. Called from the route-watch
+// callback so a transient failure heals on the next snapshot instead of
+// leaving mesh DNS dead for the process lifetime. A concurrent duplicate
+// start is harmless: the second bind on the same address fails and is
+// logged.
+func (s *Server) retryStartDNS() {
+	s.dnsMu.RLock()
+	running := s.dnsServer != nil
+	s.dnsMu.RUnlock()
+	if running {
+		return
+	}
+
+	s.servicesMu.Lock()
+	ctx := s.servicesCtx
+	s.servicesMu.Unlock()
+	if ctx == nil || ctx.Err() != nil {
+		return
+	}
+
+	s.logger.Info("retrying mesh DNS server start")
+	if err := s.startDNS(ctx); err != nil {
+		s.logger.Warn("mesh DNS server retry failed", zap.Error(err))
+	}
 }
 
 // resolveDNSListen returns the bind address for the DNS resolver:
@@ -582,11 +628,18 @@ func (s *Server) onDashboardUpdate(routes []route.Route, suffixes []string, host
 		s.logger.Warn("failed to apply autoroutes", zap.Error(err))
 	}
 
-	if s.dnsServer == nil {
+	dnsServer, _, _ := s.dnsState()
+	if dnsServer == nil {
+		// The DNS server may have failed to bind at startup; retry so mesh
+		// DNS is not dead for the whole process lifetime.
+		s.retryStartDNS()
+		dnsServer, _, _ = s.dnsState()
+	}
+	if dnsServer == nil {
 		return
 	}
 
-	canonicalSuffixes := s.dnsServer.SetState(suffixes, dashboardHostsToMeshHosts(hosts, s.logger))
+	canonicalSuffixes := dnsServer.SetState(suffixes, dashboardHostsToMeshHosts(hosts, s.logger))
 	s.applyDNSIntegration(canonicalSuffixes)
 }
 
@@ -635,22 +688,23 @@ func dashboardHostsToMeshHosts(hosts []autoroutes.DashboardMeshHost, logger *zap
 // (sorted) order; the caller passes the slice returned by
 // dns.Server.SetState.
 func (s *Server) applyDNSIntegration(next []string) {
-	if s.dnsIntegration == nil {
+	_, listenIP, integration := s.dnsState()
+	if integration == nil {
 		return
 	}
 
 	s.appliedMu.Lock()
 	defer s.appliedMu.Unlock()
 
-	if s.applied.listenIP == s.dnsListenIP && slices.Equal(s.applied.suffixes, next) {
+	if s.applied.listenIP == listenIP && slices.Equal(s.applied.suffixes, next) {
 		return
 	}
 
 	if len(next) == 0 {
-		if err := s.dnsIntegration.Revert(); err != nil {
+		if err := integration.Revert(); err != nil {
 			s.logger.Warn("dns integration revert failed",
 				zap.Error(err),
-				zap.String("integration", s.dnsIntegration.Name()),
+				zap.String("integration", integration.Name()),
 			)
 			return
 		}
@@ -658,16 +712,16 @@ func (s *Server) applyDNSIntegration(next []string) {
 		return
 	}
 
-	if err := s.dnsIntegration.Apply(next); err != nil {
+	if err := integration.Apply(next); err != nil {
 		s.logger.Warn("dns integration apply failed",
 			zap.Error(err),
-			zap.String("integration", s.dnsIntegration.Name()),
+			zap.String("integration", integration.Name()),
 			zap.Strings("suffixes", next),
 		)
 		return
 	}
 	s.applied = appliedDNSState{
-		listenIP: s.dnsListenIP,
+		listenIP: listenIP,
 		suffixes: slices.Clone(next),
 		at:       time.Now(),
 	}
@@ -1170,8 +1224,9 @@ func (s *Server) resolveTraceTarget(dest string, cfg *config.Config) (net.IP, st
 
 	name := strings.ToLower(strings.TrimSuffix(dest, "."))
 
-	if s.dnsServer != nil && meshdns.MatchesAnySuffix(name, s.dnsServer.Suffixes()) {
-		h, ok := s.dnsServer.Lookup(name)
+	dnsServer, _, _ := s.dnsState()
+	if dnsServer != nil && meshdns.MatchesAnySuffix(name, dnsServer.Suffixes()) {
+		h, ok := dnsServer.Lookup(name)
 		if !ok {
 			return nil, "", fmt.Errorf("mesh hostname %q is not registered", dest)
 		}
@@ -1209,16 +1264,17 @@ func (s *Server) GetConfigPath() string {
 // is false when the resolver is not running (e.g. autoroutes is
 // disabled); in that case Hosts and Suffixes are empty.
 func (s *Server) GetMeshHosts() *api.HostListResult {
-	if s.dnsServer == nil {
+	dnsServer, _, _ := s.dnsState()
+	if dnsServer == nil {
 		return &api.HostListResult{Enabled: false}
 	}
 
 	result := &api.HostListResult{
 		Enabled:  true,
-		Suffixes: s.dnsServer.Suffixes(),
+		Suffixes: dnsServer.Suffixes(),
 	}
 
-	hosts := s.dnsServer.Hosts()
+	hosts := dnsServer.Hosts()
 	result.Hosts = make([]api.MeshHostInfo, 0, len(hosts))
 	for _, h := range hosts {
 		info := api.MeshHostInfo{
@@ -1303,19 +1359,20 @@ func (s *Server) GetDNSStatus() *api.DNSStatusResult {
 	out := &api.DNSStatusResult{
 		Preference: cfg.DNSIntegration,
 	}
-	if s.dnsServer == nil {
+	dnsServer, listenIP, integration := s.dnsState()
+	if dnsServer == nil {
 		out.Backend = meshdns.IntegrationNone
 		return out
 	}
 
 	out.Enabled = true
 	out.Backend = meshdns.IntegrationNone
-	if s.dnsIntegration != nil {
-		out.Backend = s.dnsIntegration.Name()
+	if integration != nil {
+		out.Backend = integration.Name()
 	}
-	out.Listen = net.JoinHostPort(s.dnsListenIP, "53")
-	out.Suffixes = s.dnsServer.Suffixes()
-	out.HostCount = s.dnsServer.HostCount()
+	out.Listen = net.JoinHostPort(listenIP, "53")
+	out.Suffixes = dnsServer.Suffixes()
+	out.HostCount = dnsServer.HostCount()
 
 	s.appliedMu.Lock()
 	out.AppliedListen = s.applied.listenIP
