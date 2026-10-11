@@ -390,19 +390,22 @@ func (m *Manager) run(ctx context.Context) {
 			m.setLastError(err.Error())
 			m.logger.Warn("expose: session ended", zap.Error(err), zap.Duration("retry_in", backoff))
 		} else {
-			m.logger.Info("expose: session ended; reconnecting", zap.Duration("retry_in", backoff))
 			// A session that ran cleanly did connect; reconnect promptly
 			// instead of riding whatever backoff earlier failures accrued.
 			backoff = minBackoff
+			m.logger.Info("expose: session ended; reconnecting", zap.Duration("retry_in", backoff))
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(jitter(backoff)):
 		}
-		backoff *= 2
-		if backoff > maxBackoff {
-			backoff = maxBackoff
+		// Only failed attempts escalate the backoff.
+		if err != nil {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
 		}
 	}
 }
