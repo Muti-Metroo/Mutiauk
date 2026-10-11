@@ -532,8 +532,8 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate admin HTTP interface. Loopback-only is a hard guarantee:
-	// the interface is unauthenticated, so binding it to a routable
-	// address would expose daemon control to the network.
+	// even with token authentication, the admin interface must never be
+	// reachable from the network.
 	if c.Admin.AdminEnabled() {
 		host, port, err := net.SplitHostPort(c.Admin.Listen)
 		if err != nil {
@@ -547,7 +547,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("admin.listen host %q must be a loopback IP address (e.g. 127.0.0.1 or ::1)", host)
 		}
 		if !ip.IsLoopback() {
-			return fmt.Errorf("admin.listen host %q must be a loopback address; the admin interface is unauthenticated and must not be reachable externally", host)
+			return fmt.Errorf("admin.listen host %q must be a loopback address; the admin interface must not be reachable externally", host)
 		}
 	}
 

@@ -41,7 +41,8 @@ Administrator.
 - `internal/expose/` - publish local folders/TCP services to the mesh
 - `internal/api/` - Unix-socket / named-pipe control plane
 - `internal/adminhttp/` - loopback admin dashboard (embedded, vendored
-  Bootstrap; no CDN)
+  Bootstrap; no CDN); all endpoints require the bearer token from the
+  0600 `admin-token` file next to the config
 - `internal/config/`, `internal/service/`, `internal/wizard/` - config
   load/validate, service install, interactive setup
 - `configs/` - example YAML configs; `test/` - Docker test rigs and load tests

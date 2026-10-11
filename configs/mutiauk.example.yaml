@@ -140,8 +140,11 @@ expose:
 # Local admin HTTP interface: a browser dashboard plus JSON endpoints
 # for inspecting the running daemon (applied routes, exposed
 # folders/ports, Muti Metroo agent connection status) and managing local
-# exposing. Enabled by default. It carries no authentication, so it is
-# bound to loopback only; a non-loopback listen host is rejected.
+# exposing. Enabled by default. Bound to loopback only, and every
+# endpoint requires a per-install bearer token stored in the admin-token
+# file next to this config (created with mode 0600 on first start).
+# Run `sudo mutiauk admin` to print a dashboard login URL; scripted
+# access sends the token as "Authorization: Bearer <token>".
 admin:
   # enabled: true
   # Loopback host:port. Defaults to 127.0.0.1:48088. The daemon also

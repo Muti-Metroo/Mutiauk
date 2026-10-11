@@ -4,14 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/postalsys/mutiauk/internal/api"
 	"github.com/postalsys/mutiauk/internal/config"
 )
+
+const testToken = "test-admin-token"
 
 func testCfg() config.AdminConfig {
 	enabled := true
@@ -74,14 +79,44 @@ func newTestServer() (*fakeState, http.Handler) {
 			{Seq: 1, Action: "added", Destination: "1.2.3.4/32", Source: "auto", Comment: "autoroute:abc"},
 		},
 	}
-	srv := NewServer(st, testCfg(), nil)
+	srv := NewServer(st, testCfg(), testToken, nil)
 	return st, srv.routes()
+}
+
+// authedReq builds a request that passes all request guards: loopback
+// Host header, valid bearer token, and a JSON Content-Type when a body
+// is present. Tests for the guards themselves build requests by hand.
+func authedReq(method, path, body string) *http.Request {
+	var rdr io.Reader
+	if body != "" {
+		rdr = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, path, rdr)
+	req.Host = "127.0.0.1"
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req
+}
+
+// authedDelete builds an authorized DELETE; the admin API enforces
+// Content-Type on POST/DELETE even when no body is sent.
+func authedDelete(path string) *http.Request {
+	req := authedReq(http.MethodDelete, path, "")
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+func serve(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
 }
 
 func TestRouteEventsEndpoint(t *testing.T) {
 	_, h := newTestServer()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/route-events", nil))
+	rec := serve(h, authedReq(http.MethodGet, "/api/route-events", ""))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -96,8 +131,7 @@ func TestRouteEventsEndpoint(t *testing.T) {
 
 func TestStatusEndpoint(t *testing.T) {
 	_, h := newTestServer()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	rec := serve(h, authedReq(http.MethodGet, "/api/status", ""))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -112,8 +146,7 @@ func TestStatusEndpoint(t *testing.T) {
 
 func TestRoutesEndpoint(t *testing.T) {
 	_, h := newTestServer()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/routes", nil))
+	rec := serve(h, authedReq(http.MethodGet, "/api/routes", ""))
 	var got api.RouteListResult
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -130,8 +163,7 @@ func TestRoutesEndpoint_Refused(t *testing.T) {
 		Source:      "auto",
 		Reason:      "covers the SOCKS5 server 1.2.3.4; routing it through the tunnel would loop",
 	}}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/routes", nil))
+	rec := serve(h, authedReq(http.MethodGet, "/api/routes", ""))
 	var got api.RouteListResult
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -143,8 +175,7 @@ func TestRoutesEndpoint_Refused(t *testing.T) {
 
 func TestAgentEndpoint(t *testing.T) {
 	_, h := newTestServer()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/agent", nil))
+	rec := serve(h, authedReq(http.MethodGet, "/api/agent", ""))
 	var got AgentStatus
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -157,8 +188,7 @@ func TestAgentEndpoint(t *testing.T) {
 func TestExposeAdd(t *testing.T) {
 	st, h := newTestServer()
 	body := `{"key":"web","type":"tcp","target":"127.0.0.1:8080","comment":"x"}`
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/expose", strings.NewReader(body)))
+	rec := serve(h, authedReq(http.MethodPost, "/api/expose", body))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("add status = %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -174,8 +204,7 @@ func TestExposeAdd(t *testing.T) {
 
 func TestExposeAddBadBody(t *testing.T) {
 	_, h := newTestServer()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/expose", bytes.NewReader([]byte("not json"))))
+	rec := serve(h, authedReq(http.MethodPost, "/api/expose", "not json"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
 	}
@@ -183,8 +212,7 @@ func TestExposeAddBadBody(t *testing.T) {
 
 func TestExposeRemove(t *testing.T) {
 	st, h := newTestServer()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/expose/docs", nil))
+	rec := serve(h, authedDelete("/api/expose/docs"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("remove status = %d", rec.Code)
 	}
@@ -195,8 +223,7 @@ func TestExposeRemove(t *testing.T) {
 
 func TestIndexServesHTML(t *testing.T) {
 	_, h := newTestServer()
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	rec := serve(h, authedReq(http.MethodGet, "/", ""))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("index status = %d", rec.Code)
 	}
@@ -222,8 +249,7 @@ func TestStaticAssetsServed(t *testing.T) {
 		{"/static/bootstrap.min.css", "text/css"},
 		{"/static/bootstrap.bundle.min.js", "javascript"},
 	} {
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		rec := serve(h, authedReq(http.MethodGet, tc.path, ""))
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s: status = %d, want 200", tc.path, rec.Code)
 			continue
@@ -237,16 +263,173 @@ func TestStaticAssetsServed(t *testing.T) {
 	}
 }
 
+// TestAuthRequired verifies that every endpoint - API, dashboard, and
+// static assets - rejects requests without a token.
+func TestAuthRequired(t *testing.T) {
+	st, h := newTestServer()
+	for _, path := range []string{
+		"/", "/static/bootstrap.min.css",
+		"/api/status", "/api/agent", "/api/routes", "/api/route-events",
+		"/api/hosts", "/api/expose",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "127.0.0.1"
+		if rec := serve(h, req); rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s without token: status = %d, want 401", path, rec.Code)
+		}
+	}
+
+	// The mutating endpoints must be unreachable too, and must not have
+	// touched daemon state.
+	post := httptest.NewRequest(http.MethodPost, "/api/expose", strings.NewReader(`{"key":"x","type":"tcp","target":"127.0.0.1:22"}`))
+	post.Host = "127.0.0.1"
+	post.Header.Set("Content-Type", "application/json")
+	if rec := serve(h, post); rec.Code != http.StatusUnauthorized {
+		t.Errorf("POST /api/expose without token: status = %d, want 401", rec.Code)
+	}
+	del := httptest.NewRequest(http.MethodDelete, "/api/expose/docs", nil)
+	del.Host = "127.0.0.1"
+	del.Header.Set("Content-Type", "application/json")
+	if rec := serve(h, del); rec.Code != http.StatusUnauthorized {
+		t.Errorf("DELETE /api/expose/docs without token: status = %d, want 401", rec.Code)
+	}
+	if len(st.addCalls) != 0 || len(st.removed) != 0 {
+		t.Fatalf("unauthenticated requests mutated state: add=%v remove=%v", st.addCalls, st.removed)
+	}
+}
+
+// TestAuthWrongToken rejects a well-formed but incorrect bearer token and
+// confirms the mutating endpoints do not fire.
+func TestAuthWrongToken(t *testing.T) {
+	st, h := newTestServer()
+	req := authedReq(http.MethodPost, "/api/expose", `{"key":"x","type":"tcp","target":"127.0.0.1:22"}`)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	if rec := serve(h, req); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token: status = %d, want 401", rec.Code)
+	}
+	if len(st.addCalls) != 0 {
+		t.Fatalf("wrong-token request mutated state: %v", st.addCalls)
+	}
+	if got := serve(h, req).Header().Get("WWW-Authenticate"); !strings.Contains(got, "Bearer") {
+		t.Errorf("401 response missing WWW-Authenticate: Bearer, got %q", got)
+	}
+}
+
+// TestHostHeaderLoopbackOnly rejects non-loopback Host headers (DNS
+// rebinding defense) even when the token is valid.
+func TestHostHeaderLoopbackOnly(t *testing.T) {
+	_, h := newTestServer()
+
+	for _, host := range []string{"example.com", "192.168.1.10", "10.0.0.5:48088", "evil.localhost.evil.com"} {
+		req := authedReq(http.MethodGet, "/api/status", "")
+		req.Host = host
+		if rec := serve(h, req); rec.Code != http.StatusForbidden {
+			t.Errorf("Host %q: status = %d, want 403", host, rec.Code)
+		}
+	}
+
+	for _, host := range []string{"127.0.0.1", "127.0.0.1:48088", "127.5.5.5:48088", "localhost", "localhost:48088", "[::1]", "[::1]:48088"} {
+		req := authedReq(http.MethodGet, "/api/status", "")
+		req.Host = host
+		if rec := serve(h, req); rec.Code != http.StatusOK {
+			t.Errorf("Host %q: status = %d, want 200", host, rec.Code)
+		}
+	}
+}
+
+// TestContentTypeEnforced requires application/json on the mutating
+// POST/DELETE endpoints: cross-origin form posts cannot set it, which
+// closes the CSRF vector independent of the token check.
+func TestContentTypeEnforced(t *testing.T) {
+	st, h := newTestServer()
+
+	// A cross-origin form POST with enctype=text/plain, the classic CSRF shape.
+	req := authedReq(http.MethodPost, "/api/expose", `{"key":"x","type":"tcp","target":"127.0.0.1:22"}`)
+	req.Header.Set("Content-Type", "text/plain")
+	if rec := serve(h, req); rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("POST text/plain: status = %d, want 415", rec.Code)
+	}
+
+	// A charset parameter stays acceptable.
+	req = authedReq(http.MethodPost, "/api/expose", `{"key":"x","type":"tcp","target":"127.0.0.1:22"}`)
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	if rec := serve(h, req); rec.Code != http.StatusOK {
+		t.Errorf("POST application/json; charset=utf-8: status = %d, want 200", rec.Code)
+	}
+
+	// DELETE is checked too, even without a body.
+	req = authedReq(http.MethodDelete, "/api/expose/docs", "")
+	if rec := serve(h, req); rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("DELETE without Content-Type: status = %d, want 415", rec.Code)
+	}
+	if rec := serve(h, authedDelete("/api/expose/docs")); rec.Code != http.StatusOK {
+		t.Errorf("DELETE with application/json: status = %d, want 200", rec.Code)
+	}
+
+	if len(st.addCalls) != 1 || len(st.removed) != 1 {
+		t.Fatalf("expected exactly one accepted add and remove, got add=%v remove=%v", st.addCalls, st.removed)
+	}
+}
+
+// TestTokenQueryBootstrap covers the browser login flow: a GET with a
+// valid ?token= parameter sets a SameSite=Strict HttpOnly cookie and
+// redirects to the clean URL; subsequent cookie-carrying requests pass.
+func TestTokenQueryBootstrap(t *testing.T) {
+	_, h := newTestServer()
+
+	req := httptest.NewRequest(http.MethodGet, "/?token="+testToken, nil)
+	req.Host = "127.0.0.1"
+	rec := serve(h, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("bootstrap: status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/" {
+		t.Errorf("bootstrap: Location = %q, want /", loc)
+	}
+	var cookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == tokenCookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatalf("bootstrap: no %s cookie set", tokenCookieName)
+	}
+	if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
+		t.Errorf("cookie flags: HttpOnly=%v SameSite=%v, want HttpOnly + Strict", cookie.HttpOnly, cookie.SameSite)
+	}
+
+	// The cookie alone must authenticate subsequent requests.
+	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.Host = "127.0.0.1"
+	req.AddCookie(cookie)
+	if rec := serve(h, req); rec.Code != http.StatusOK {
+		t.Errorf("cookie-authed GET /api/status: status = %d, want 200", rec.Code)
+	}
+
+	// A wrong token in the query string is not a login.
+	req = httptest.NewRequest(http.MethodGet, "/?token=wrong", nil)
+	req.Host = "127.0.0.1"
+	if rec := serve(h, req); rec.Code != http.StatusUnauthorized {
+		t.Errorf("bootstrap with wrong token: status = %d, want 401", rec.Code)
+	}
+}
+
 func TestStartServesAndStops(t *testing.T) {
 	st := &fakeState{status: &api.StatusResult{Running: true, PID: 1}, expose: &api.ExposeStatusResult{}}
-	srv := NewServer(st, testCfg(), nil)
+	srv := NewServer(st, testCfg(), testToken, nil)
 	if err := srv.Start(context.Background()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer srv.Stop()
 
 	addr := srv.listeners[0].Addr().String()
-	resp, err := http.Get("http://" + addr + "/api/status")
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/api/status", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -259,9 +442,52 @@ func TestStartServesAndStops(t *testing.T) {
 func TestMethodRouting(t *testing.T) {
 	_, h := newTestServer()
 	// POST to a GET-only route must not succeed.
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/status", nil))
-	if rec.Code == http.StatusOK {
+	req := authedReq(http.MethodPost, "/api/status", `{}`)
+	if rec := serve(h, req); rec.Code == http.StatusOK {
 		t.Fatalf("POST /api/status should not be allowed")
+	}
+}
+
+// TestLoadOrCreateToken exercises the token file lifecycle: first call
+// generates and persists a 0600 token, later calls read it back.
+func TestLoadOrCreateToken(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "mutiauk.yaml")
+
+	tok, err := LoadOrCreateToken(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadOrCreateToken: %v", err)
+	}
+	if len(tok) != 64 {
+		t.Errorf("token length = %d, want 64 hex chars", len(tok))
+	}
+
+	path := TokenPath(cfgPath)
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("token file not created: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("token file mode = %o, want 600", perm)
+	}
+
+	// Second call must return the same token without rewriting the file.
+	tok2, err := LoadOrCreateToken(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadOrCreateToken (second): %v", err)
+	}
+	if tok2 != tok {
+		t.Errorf("second call returned a different token")
+	}
+
+	got, err := ReadToken(cfgPath)
+	if err != nil {
+		t.Fatalf("ReadToken: %v", err)
+	}
+	if got != tok {
+		t.Errorf("ReadToken = %q, want %q", got, tok)
+	}
+
+	if _, err := ReadToken(filepath.Join(t.TempDir(), "nope.yaml")); err == nil {
+		t.Error("ReadToken on a missing file should fail")
 	}
 }

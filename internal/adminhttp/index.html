@@ -344,7 +344,9 @@ $("rm-confirm").addEventListener("click", async () => {
   rmModal.hide();
   if (!rmKey) return;
   const key = rmKey; rmKey = null;
-  const r = await fetch("/api/expose/" + encodeURIComponent(key), { method: "DELETE" });
+  const r = await fetch("/api/expose/" + encodeURIComponent(key), {
+    method: "DELETE", headers: { "Content-Type": "application/json" },
+  });
   const j = await r.json().catch(() => ({}));
   if (j.success) { showToast("Removed " + key, "success"); refresh(); }
   else showToast("Remove failed: " + (j.message || r.status), "danger");

@@ -194,10 +194,21 @@ func (s *Server) startServices(ctx context.Context) {
 	}
 
 	if cfg.Admin.AdminEnabled() {
-		s.adminServer = adminhttp.NewServer(s, cfg.Admin, s.logger)
-		if err := s.adminServer.Start(ctx); err != nil {
-			s.logger.Warn("failed to start admin HTTP interface", zap.Error(err))
-			s.adminServer = nil
+		token, err := adminhttp.LoadOrCreateToken(s.configPath)
+		if err != nil {
+			// Fail closed: without a token the admin interface would be
+			// unusable anyway, and serving it unauthenticated is not an
+			// option.
+			s.logger.Warn("admin HTTP interface disabled: failed to load admin token", zap.Error(err))
+		} else {
+			s.adminServer = adminhttp.NewServer(s, cfg.Admin, token, s.logger)
+			if err := s.adminServer.Start(ctx); err != nil {
+				s.logger.Warn("failed to start admin HTTP interface", zap.Error(err))
+				s.adminServer = nil
+			} else {
+				s.logger.Info("admin HTTP interface requires a token; run `mutiauk admin` to print a dashboard login URL",
+					zap.String("token_file", adminhttp.TokenPath(s.configPath)))
+			}
 		}
 	}
 

@@ -21,7 +21,8 @@ var indexHTML []byte
 var staticFS embed.FS
 
 // routes builds the request multiplexer. Method+path patterns require
-// Go 1.22+ ServeMux semantics (the project builds on go1.25.5).
+// Go 1.22+ ServeMux semantics (the project builds on go1.25.5). Every
+// route is wrapped in the Host-header / token / Content-Type guards.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
@@ -34,7 +35,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/expose", s.handleExposeList)
 	mux.HandleFunc("POST /api/expose", s.handleExposeAdd)
 	mux.HandleFunc("DELETE /api/expose/{key}", s.handleExposeRemove)
-	return mux
+	return s.secure(mux)
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {

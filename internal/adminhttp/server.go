@@ -6,8 +6,12 @@
 //
 // The interface is a thin HTTP layer over api.StateProvider (the same
 // interface backing the Unix-socket control plane); it adds no daemon
-// business logic. It is bound to loopback only and carries no
-// authentication: the loopback binding is the trust boundary.
+// business logic. It is bound to loopback only and every endpoint
+// (dashboard included) requires a per-install bearer token, stored in a
+// root-only file (0600) next to the config. Requests must additionally
+// carry a loopback Host header, and POST/DELETE endpoints enforce
+// Content-Type: application/json, which together close CSRF and DNS
+// rebinding against the mutating endpoints.
 package adminhttp
 
 import (
@@ -29,6 +33,7 @@ import (
 type Server struct {
 	state  api.StateProvider
 	cfg    config.AdminConfig
+	token  string
 	logger *zap.Logger
 
 	http      *http.Server
@@ -37,12 +42,13 @@ type Server struct {
 }
 
 // NewServer constructs an admin HTTP server over the given state
-// provider. Call Start to bind and serve; Stop to tear down.
-func NewServer(state api.StateProvider, cfg config.AdminConfig, logger *zap.Logger) *Server {
+// provider. token is the bearer credential required on every request;
+// see LoadOrCreateToken. Call Start to bind and serve; Stop to tear down.
+func NewServer(state api.StateProvider, cfg config.AdminConfig, token string, logger *zap.Logger) *Server {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &Server{state: state, cfg: cfg, logger: logger}
+	return &Server{state: state, cfg: cfg, token: token, logger: logger}
 }
 
 // Start binds the configured loopback address and serves the dashboard.

@@ -62,6 +62,7 @@ func init() {
 	rootCmd.AddCommand(newDNSCmd())
 	rootCmd.AddCommand(newExposeCmd())
 	rootCmd.AddCommand(newStatusCmd())
+	rootCmd.AddCommand(newAdminCmd())
 	rootCmd.AddCommand(newServiceCmd())
 	rootCmd.AddCommand(newConfigCmd())
 	rootCmd.AddCommand(newCleanupCmd())
