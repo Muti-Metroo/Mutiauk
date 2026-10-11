@@ -5,6 +5,7 @@ package service
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
@@ -44,6 +45,27 @@ func installImpl(cfg ServiceConfig, execPath string) error {
 		return fmt.Errorf("create service: %w", err)
 	}
 	defer s.Close()
+
+	// Restart-on-failure, matching the Linux (systemd Restart=on-failure)
+	// and macOS (launchd KeepAlive) units: without explicit recovery
+	// actions the SCM leaves a crashed service down permanently.
+	// The failure counter resets after 60s of stable running; past the
+	// third action the SCM repeats the last one.
+	recoveryActions := []mgr.RecoveryAction{
+		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 30 * time.Second},
+	}
+	if err := s.SetRecoveryActions(recoveryActions, 60); err != nil {
+		// Non-fatal: the service works without recovery actions, it just
+		// stays down after a crash.
+		fmt.Printf("Warning: failed to set service recovery actions: %v\n", err)
+	}
+	// Also restart when the process exits with an error code but without
+	// technically "crashing" (non-crash failure flag).
+	if err := s.SetRecoveryActionsOnNonCrashFailures(true); err != nil {
+		fmt.Printf("Warning: failed to enable recovery on non-crash failures: %v\n", err)
+	}
 
 	fmt.Printf("Created service: %s\n", cfg.Name)
 

@@ -68,12 +68,23 @@ func closeWrite(c net.Conn) {
 // Each direction propagates a clean EOF as a half-close (CloseWrite) to the
 // other connection, so a local FIN reaches the remote server while an
 // in-flight response is still delivered back. A copy error tears the other
-// direction down to unblock its reader. It returns once both directions are
+// direction down to unblock its reader. A panic in either copy goroutine is
+// recovered and reported as an error so it tears down only this flow rather
+// than crashing the daemon. It returns once both directions are
 // done or the context is canceled; both connections are closed on return.
 func bidirectionalCopy(ctx context.Context, local, remote net.Conn, bufferSize int) error {
 	errCh := make(chan error, 2)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// Unblock the sibling goroutine and report the panic as a
+				// flow-scoped error instead of crashing the process.
+				local.Close()
+				remote.Close()
+				errCh <- fmt.Errorf("panic copying local->remote: %v", r)
+			}
+		}()
 		_, err := io.CopyBuffer(remote, local, make([]byte, bufferSize))
 		if err == nil {
 			closeWrite(remote)
@@ -84,6 +95,13 @@ func bidirectionalCopy(ctx context.Context, local, remote net.Conn, bufferSize i
 	}()
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				local.Close()
+				remote.Close()
+				errCh <- fmt.Errorf("panic copying remote->local: %v", r)
+			}
+		}()
 		_, err := io.CopyBuffer(local, remote, make([]byte, bufferSize))
 		if err == nil {
 			closeWrite(local)

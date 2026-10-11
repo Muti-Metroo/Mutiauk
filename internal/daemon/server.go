@@ -430,8 +430,38 @@ func (s *Server) startAutoRoutes(ctx context.Context) {
 	)
 
 	go func() {
-		if err := watcher.Run(ctx); errors.Is(err, autoroutes.ErrUnsupported) {
-			s.logger.Error("agent does not support route-watch; autoroutes disabled")
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			// watcher.Run returns only on context cancellation or
+			// ErrUnsupported; any other return means a panic escaped the
+			// watcher. Recover, log, and restart it so one bad snapshot
+			// does not kill autoroutes for the process lifetime.
+			err := func() (err error) {
+				defer func() {
+					if r := recover(); r != nil {
+						s.logger.Error("panic in autoroutes watcher; restarting",
+							zap.Any("panic", r),
+							zap.Stack("stacktrace"),
+						)
+						err = fmt.Errorf("panic: %v", r)
+					}
+				}()
+				return watcher.Run(ctx)
+			}()
+			if errors.Is(err, autoroutes.ErrUnsupported) {
+				s.logger.Error("agent does not support route-watch; autoroutes disabled")
+				return
+			}
+			if err == nil || ctx.Err() != nil {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
 		}
 	}()
 }

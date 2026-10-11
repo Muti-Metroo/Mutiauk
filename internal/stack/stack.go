@@ -266,6 +266,9 @@ func (s *Stack) Run(ctx context.Context) error {
 	// Set up TCP forwarder. The in-flight cap bounds the number of
 	// concurrent PreConnect mesh dials a SYN flood can trigger.
 	tcpForwarder := tcp.NewForwarder(s.stack, 0, s.cfg.effectiveMaxTCPInFlight(), func(r *tcp.ForwarderRequest) {
+		// The forwarder callback runs on a gVisor-internal goroutine; a
+		// panic here (e.g. in PreConnect) must not crash the daemon.
+		defer s.recoverPanic("TCP forwarder request")
 		s.handleTCPForward(ctx, r)
 	})
 	s.stack.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpForwarder.HandlePacket)
@@ -316,6 +319,7 @@ func (s *Stack) HandleUDPPacket(srcIP, dstIP net.IP, srcPort, dstPort uint16, pa
 	// HandleRawUDP returns once the datagram is sent; it never blocks waiting
 	// for a response.
 	go func() {
+		defer s.recoverPanic("UDP packet handler")
 		defer func() { <-s.udpSem }()
 
 		ctx, cancel := context.WithTimeout(s.runContext(), 30*time.Second)
@@ -328,6 +332,19 @@ func (s *Stack) HandleUDPPacket(srcIP, dstIP net.IP, srcPort, dstPort uint16, pa
 			)
 		}
 	}()
+}
+
+// recoverPanic confines a panic to the goroutine that raised it: it logs
+// the panic with a stack trace instead of letting it crash the whole
+// daemon. Deferred at every per-packet and per-connection goroutine entry
+// point.
+func (s *Stack) recoverPanic(scope string) {
+	if r := recover(); r != nil {
+		s.logger.Error("panic in "+scope+"; tearing down only this flow",
+			zap.Any("panic", r),
+			zap.Stack("stacktrace"),
+		)
+	}
 }
 
 // runContext returns the daemon-scoped context captured by Run, falling back
@@ -419,6 +436,7 @@ func (s *Stack) HandleICMPPacket(srcIP, dstIP net.IP, id, seq uint16, payload []
 
 	// Forward through SOCKS5 in a goroutine to not block
 	go func() {
+		defer s.recoverPanic("ICMP packet handler")
 		defer func() { <-s.icmpSem }()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -526,6 +544,7 @@ func (s *Stack) handleTCPForward(ctx context.Context, r *tcp.ForwarderRequest) {
 	if s.cfg.TCPHandler != nil {
 		s.tcpWg.Add(1)
 		go func() {
+			defer s.recoverPanic("TCP connection handler")
 			defer s.tcpWg.Done()
 			if err := s.cfg.TCPHandler.HandleTCP(ctx, conn, srcAddr, dstAddr); err != nil {
 				s.logger.Debug("TCP handler error",
