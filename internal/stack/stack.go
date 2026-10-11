@@ -126,6 +126,9 @@ type Stack struct {
 	// goroutines derive from it so daemon shutdown cancels them.
 	runCtxMu sync.RWMutex
 	runCtx   context.Context
+
+	// truncLog rate-limits MTU-truncation warnings for UDP responses.
+	truncLog *logRateLimiter
 }
 
 const (
@@ -139,11 +142,12 @@ func New(tunDev tun.Device, cfg Config) (*Stack, error) {
 	}
 
 	s := &Stack{
-		tunDev:  tunDev,
-		cfg:     cfg,
-		logger:  cfg.Logger,
-		udpSem:  make(chan struct{}, maxConcurrentUDP),
-		icmpSem: make(chan struct{}, maxConcurrentICMP),
+		tunDev:   tunDev,
+		cfg:      cfg,
+		logger:   cfg.Logger,
+		udpSem:   make(chan struct{}, maxConcurrentUDP),
+		icmpSem:  make(chan struct{}, maxConcurrentICMP),
+		truncLog: newLogRateLimiter(5 * time.Second),
 	}
 
 	// Create the gVisor stack
@@ -317,7 +321,23 @@ func (s *Stack) runContext() context.Context {
 // writeUDPResponse synthesizes a UDP packet from responderIP:responderPort to
 // clientIP:clientPort and writes it to the TUN device. It implements
 // UDPReplyFunc.
+//
+// The payload is truncated to fit the link MTU: the TUN write is
+// all-or-nothing, so an oversized packet would be dropped at the device
+// boundary. Truncation is logged at a bounded rate.
 func (s *Stack) writeUDPResponse(responderIP, clientIP net.IP, responderPort, clientPort uint16, payload []byte) {
+	payload, truncated := clampUDPPayload(payload, s.cfg.MTU, isIPv6(responderIP))
+	if truncated {
+		if suppressed, ok := s.truncLog.allow(); ok {
+			s.logger.Warn("UDP response exceeds link MTU, truncating payload",
+				zap.String("responder", fmt.Sprintf("%s:%d", responderIP, responderPort)),
+				zap.String("client", fmt.Sprintf("%s:%d", clientIP, clientPort)),
+				zap.Int("mtu", s.cfg.MTU),
+				zap.Int("suppressed", suppressed),
+			)
+		}
+	}
+
 	responsePkt := BuildUDPResponse(responderIP, clientIP, responderPort, clientPort, payload)
 
 	if _, err := s.tunDev.Write(responsePkt); err != nil {
@@ -329,6 +349,24 @@ func (s *Stack) writeUDPResponse(responderIP, clientIP net.IP, responderPort, cl
 	s.logger.Debug("UDP response written to TUN",
 		zap.Int("len", len(responsePkt)),
 	)
+}
+
+// clampUDPPayload truncates payload so a synthesized UDP packet carrying it
+// fits within mtu. It returns the payload (shared, not copied) and whether
+// truncation occurred.
+func clampUDPPayload(payload []byte, mtu int, v6 bool) ([]byte, bool) {
+	overhead := header.IPv4MinimumSize + header.UDPMinimumSize
+	if v6 {
+		overhead = header.IPv6MinimumSize + header.UDPMinimumSize
+	}
+	maxPayload := mtu - overhead
+	if maxPayload < 0 {
+		maxPayload = 0
+	}
+	if len(payload) <= maxPayload {
+		return payload, false
+	}
+	return payload[:maxPayload], true
 }
 
 // HandleICMPPacket implements ICMPPacketHandler for the intercept endpoint
