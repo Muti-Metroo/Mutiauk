@@ -145,10 +145,13 @@ func (f *ICMPForwarder) HandleICMP(ctx context.Context, srcIP, dstIP net.IP, id,
 }
 
 // getOrCreateSession gets an existing session or creates a new one.
+// The SOCKS5 ICMP ASSOCIATE handshake (network I/O, potentially seconds on
+// a slow mesh) runs outside the lock, mirroring RelayPool.GetOrCreate, so
+// session setup never stalls the RLock fast path for other sessions.
 func (f *ICMPForwarder) getOrCreateSession(ctx context.Context, dstIP net.IP, id uint16) (*icmpSession, error) {
 	key := icmpSessionKey{dstIP: dstIP.String(), id: id}
 
-	// Try to get existing session
+	// Fast path: existing session
 	f.mu.RLock()
 	session, exists := f.sessions[key]
 	f.mu.RUnlock()
@@ -157,20 +160,21 @@ func (f *ICMPForwarder) getOrCreateSession(ctx context.Context, dstIP net.IP, id
 		return session, nil
 	}
 
-	// Create new session
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if session, exists = f.sessions[key]; exists {
-		return session, nil
-	}
-
-	// Create ICMP relay through SOCKS5
+	// Slow path: create the relay outside the lock (network I/O)
 	client := f.clientHolder.Get()
 	relay, err := client.ICMPAssociate(ctx, dstIP)
 	if err != nil {
 		return nil, err
+	}
+
+	// Re-acquire the lock and double-check: another goroutine may have
+	// installed a session for this key while we were doing I/O.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if session, exists = f.sessions[key]; exists {
+		relay.Close()
+		return session, nil
 	}
 
 	session = &icmpSession{

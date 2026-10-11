@@ -203,6 +203,95 @@ func TestICMPForwarder_Cleanup_KeepsRecent(t *testing.T) {
 
 // --- Concurrent Access Tests ---
 
+func TestICMPForwarder_ConcurrentSessionCreation_NoDuplicates(t *testing.T) {
+	server := newMockSOCKS5Server(t)
+	server.associateDelay = 100 * time.Millisecond
+	defer server.Close()
+
+	client := socks5.NewClient(server.Addr(), nil, 5*time.Second, 5*time.Second)
+	forwarder := NewICMPForwarder(client, zap.NewNop(), 5*time.Second)
+	defer forwarder.Close()
+
+	dstIP := net.ParseIP("8.8.8.8")
+	ctx := context.Background()
+
+	const goroutines = 16
+	sessions := make([]*icmpSession, goroutines)
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			session, err := forwarder.getOrCreateSession(ctx, dstIP, 1234)
+			if err != nil {
+				t.Errorf("getOrCreateSession failed: %v", err)
+				return
+			}
+			sessions[i] = session
+		}(i)
+	}
+	wg.Wait()
+
+	if n := len(forwarder.sessions); n != 1 {
+		t.Errorf("expected exactly 1 session, got %d", n)
+	}
+	for i, s := range sessions {
+		if s == nil {
+			t.Errorf("goroutine %d got nil session", i)
+		} else if s != sessions[0] {
+			t.Errorf("goroutine %d got a different session instance", i)
+		}
+	}
+}
+
+func TestICMPForwarder_SessionCreationDoesNotBlockLookups(t *testing.T) {
+	server := newMockSOCKS5Server(t)
+	defer server.Close()
+
+	client := socks5.NewClient(server.Addr(), nil, 5*time.Second, 5*time.Second)
+	forwarder := NewICMPForwarder(client, zap.NewNop(), 5*time.Second)
+	defer forwarder.Close()
+
+	ctx := context.Background()
+
+	// Establish a session to look up.
+	dstA := net.ParseIP("8.8.8.8")
+	if _, err := forwarder.getOrCreateSession(ctx, dstA, 1234); err != nil {
+		t.Fatalf("initial getOrCreateSession failed: %v", err)
+	}
+
+	// Start a slow session creation for another destination.
+	server.associateDelay = 500 * time.Millisecond
+	createDone := make(chan error, 1)
+	go func() {
+		_, err := forwarder.getOrCreateSession(ctx, net.ParseIP("1.1.1.1"), 1234)
+		createDone <- err
+	}()
+
+	// While the slow create is in flight, lookups of the existing session
+	// must not be blocked by it (the write lock used to be held across the
+	// whole ICMP ASSOCIATE handshake).
+	start := time.Now()
+	for i := 0; i < 200; i++ {
+		if _, err := forwarder.getOrCreateSession(ctx, dstA, 1234); err != nil {
+			t.Fatalf("lookup failed during concurrent create: %v", err)
+		}
+	}
+	lookupElapsed := time.Since(start)
+
+	if err := <-createDone; err != nil {
+		t.Fatalf("slow create failed: %v", err)
+	}
+
+	if lookupElapsed > 250*time.Millisecond {
+		t.Errorf("lookups stalled for %v during session creation", lookupElapsed)
+	}
+
+	if n := len(forwarder.sessions); n != 2 {
+		t.Errorf("expected 2 sessions, got %d", n)
+	}
+}
+
 func TestICMPForwarder_ConcurrentClose(t *testing.T) {
 	forwarder := NewICMPForwarder(&socks5.Client{}, zap.NewNop(), time.Second)
 
@@ -244,6 +333,10 @@ func TestICMPForwarder_ConcurrentSessionAccess(t *testing.T) {
 // mockSOCKS5Server simulates a SOCKS5 server that supports ICMP
 type mockSOCKS5Server struct {
 	listener net.Listener
+
+	// associateDelay, when > 0, delays the ICMP ASSOCIATE reply to simulate
+	// a slow mesh during session setup.
+	associateDelay time.Duration
 }
 
 func newMockSOCKS5Server(tb testing.TB) *mockSOCKS5Server {
@@ -306,6 +399,9 @@ func (s *mockSOCKS5Server) handleConnection(conn net.Conn) {
 
 	// Check if this is ICMP Echo command (0x04)
 	if req[1] == 0x04 {
+		if s.associateDelay > 0 {
+			time.Sleep(s.associateDelay)
+		}
 		// Send success reply
 		reply := []byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
 		conn.Write(reply)
