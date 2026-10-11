@@ -110,13 +110,13 @@ Expose: Mesh peer -> Muti Metroo agent listener -> Muti Metroo -> SOCKS5 CmdExpo
 
 **stack/stack.go** - Wraps gVisor's `tcpip/stack` package. Uses `tcp.NewForwarder` to intercept TCP connections, converts them to `net.Conn` via `gonet`, then passes to handlers. UDP is handled separately via link-layer interception.
 
-**stack/intercept_endpoint.go** - Wraps gVisor's link endpoint to intercept UDP packets at the link layer. This is necessary because gVisor's `udp.NewForwarder` only handles packets destined for local addresses, not outbound traffic. The intercept endpoint parses raw IP/UDP headers and passes payloads to the `RawUDPHandler`.
+**stack/intercept_endpoint.go** - Wraps gVisor's link endpoint to intercept UDP packets at the link layer. This is necessary because gVisor's `udp.NewForwarder` only handles packets destined for local addresses, not outbound traffic. The intercept endpoint parses raw IP/UDP headers and passes payloads to the `RawUDPHandler`. Fragmented IPv4 datagrams (MF set or non-zero offset) are never intercepted - they are dropped with a rate-limited warning since the intercept path does not reassemble; IPv6 fragments fall through to gVisor, which also cannot deliver them (no UDP endpoint is registered).
 
 **proxy/tcp_forwarder.go** - Implements `TCPHandler` interface. Establishes SOCKS5 CONNECT and performs bidirectional data copy. Supports `PreConnect` for accurate port scanning.
 
 **proxy/udp_forwarder.go** - Legacy UDP handler using gVisor's UDP forwarder (for local-destined packets).
 
-**proxy/raw_udp_forwarder.go** - Implements `RawUDPHandler` interface for intercepted UDP. Uses SOCKS5 UDP ASSOCIATE to relay datagrams. Maintains a pool of relay sessions with TTL-based cleanup.
+**proxy/raw_udp_forwarder.go** - Implements `RawUDPHandler` interface for intercepted UDP. Uses SOCKS5 UDP ASSOCIATE to relay datagrams. Maintains a pool of relay sessions (keyed by srcIP:srcPort) with TTL-based cleanup; each association owns a reader goroutine that demultiplexes response datagrams by responder address and delivers them through the reply callback, so multi-datagram responses, interleaved destinations, and one-way flows all work without blocking. A control-connection monitor (RFC 1928: the association dies with its TCP control conn) and reader exit both evict the association from the pool. Responses are written to the TUN by the stack, which truncates oversized payloads to the link MTU with a rate-limited warning.
 
 **proxy/icmp_forwarder.go** - Forwards ICMP echo requests/replies through the SOCKS5 UDP relay so `ping` works through the tunnel.
 
@@ -167,8 +167,12 @@ type TCPPreConnector interface {
 
 // RawUDPHandler - For link-layer intercepted UDP packets
 type RawUDPHandler interface {
-    HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte) ([]byte, error)
+    HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte, reply UDPReplyFunc) error
 }
+
+// UDPReplyFunc - Delivers a response datagram back to the local client,
+// sourced from the actual responder's address
+type UDPReplyFunc func(responderIP, clientIP net.IP, responderPort, clientPort uint16, payload []byte)
 
 // dns/integration.go - Implemented by each host-DNS backend
 type Integration interface {
