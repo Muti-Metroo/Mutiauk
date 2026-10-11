@@ -44,7 +44,7 @@ type stream struct {
 var errClosed = errors.New("expose: stream closed")
 
 // errBufferOverflow fires when push would push the per-stream buffer
-// past stream.maxBufferedBytes — a slow consumer with a fast
+// past stream.maxBufferedBytes -- a slow consumer with a fast
 // producer. The session translates this into a stream close so we
 // stop receiving DATA frames for this id.
 var errBufferOverflow = errors.New("expose: stream receive buffer overflow")

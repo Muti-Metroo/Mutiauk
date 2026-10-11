@@ -234,7 +234,7 @@ type ExposeConfig struct {
 }
 
 // Forward type values written in YAML and matched in validation /
-// expose handler dispatch. Stable strings — changing them is a
+// expose handler dispatch. Stable strings -- changing them is a
 // config-format breaking change.
 const (
 	ForwardTypeFolder = "folder"

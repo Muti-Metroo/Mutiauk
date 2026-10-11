@@ -18,14 +18,14 @@ import (
 )
 
 // folderHandler serves files from Root over a single connection.
-// Strict policy: only an exact path → regular file mapping returns
+// Strict policy: only an exact path -> regular file mapping returns
 // content. Anything else (missing, directory, symlink-out-of-root,
 // path containing "..") returns an empty 404. No index.html fallback,
 // no autoindex, no welcome page.
 //
 // We process requests directly on the connection rather than handing
 // it to http.Server because the latter's accept loop has nowhere to
-// go on a single-shot connection — closing it cleanly while letting
+// go on a single-shot connection -- closing it cleanly while letting
 // in-flight requests complete is awkward. The bare-bones loop below
 // supports HTTP/1.1 keep-alive (multiple requests per stream) and
 // nothing else, which is all the static-file use case needs.
