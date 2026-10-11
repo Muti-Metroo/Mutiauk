@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -91,6 +92,11 @@ type Server struct {
 	exposeMgr   *expose.Manager
 	dnsServer   *meshdns.Server
 
+	// servicesMu guards servicesCtx and watcher.
+	servicesMu  sync.Mutex
+	servicesCtx context.Context // daemon-scoped context from startServices
+	watcher     *watcherHandle  // running autoroutes watcher, if any
+
 	// protectedIPs are the resolved SOCKS5 server addresses that must never
 	// be routed into the TUN: doing so would route the daemon's own upstream
 	// connection through the tunnel and loop, breaking all networking.
@@ -113,6 +119,14 @@ type Server struct {
 
 	appliedMu sync.Mutex
 	applied   appliedDNSState // last-applied state; closes the diff cache
+}
+
+// watcherHandle tracks a running autoroutes watcher so it can be stopped
+// when the SOCKS5 config changes (the watcher pins its client at
+// construction) or when the daemon shuts down.
+type watcherHandle struct {
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // appliedDNSState is the diff key used by applyDNSIntegration to skip
@@ -185,6 +199,13 @@ func (s *Server) setRunning(running bool) error {
 // startServices starts API server, routes, autoroutes poller, and NAT GC
 func (s *Server) startServices(ctx context.Context) {
 	cfg := s.cfg.Load()
+
+	// Store the daemon-scoped context so reload-triggered restarts (the
+	// autoroutes watcher) and retries (the DNS server) can spawn
+	// replacements with the same lifetime.
+	s.servicesMu.Lock()
+	s.servicesCtx = ctx
+	s.servicesMu.Unlock()
 
 	if cfg.Daemon.SocketPath != "" {
 		s.apiServer = api.NewServer(cfg.Daemon.SocketPath, s, s.logger)
@@ -329,7 +350,7 @@ func (s *Server) initNetwork(cfg *config.Config, tunCfg tun.Config) error {
 		UDPTTL:     cfg.NAT.UDPTimeout,
 	})
 
-	s.network.socks5Client = s.createSOCKS5Client()
+	s.network.socks5Client = s.createSOCKS5Client(cfg)
 	s.network.tcpForwarder = proxy.NewTCPForwarder(s.network.socks5Client, s.network.natTable, s.logger)
 	s.network.udpForwarder = proxy.NewUDPForwarder(s.network.socks5Client, s.network.natTable, s.logger)
 	s.network.rawUDPForwarder = proxy.NewRawUDPForwarder(s.network.socks5Client, s.logger)
@@ -362,9 +383,8 @@ func (s *Server) initNetwork(cfg *config.Config, tunCfg tun.Config) error {
 	return nil
 }
 
-// createSOCKS5Client creates a SOCKS5 client from current config
-func (s *Server) createSOCKS5Client() *socks5.Client {
-	cfg := s.cfg.Load()
+// createSOCKS5Client creates a SOCKS5 client from the given config
+func (s *Server) createSOCKS5Client(cfg *config.Config) *socks5.Client {
 	auth := socks5.NewAuthenticator(cfg.SOCKS5.Username, cfg.SOCKS5.Password)
 	return socks5.NewClientWithOptions(
 		cfg.SOCKS5.Server,
@@ -382,6 +402,16 @@ func (s *Server) createSOCKS5Client() *socks5.Client {
 
 // cleanup closes all components
 func (s *Server) cleanup() {
+	// Stop the autoroutes watcher explicitly: the deferred cancel in Run
+	// runs after cleanup, so without this the watcher would keep applying
+	// routes and DNS state while the rest of the daemon is being torn down.
+	s.servicesMu.Lock()
+	if s.watcher != nil {
+		s.watcher.cancel()
+		s.watcher = nil
+	}
+	s.servicesMu.Unlock()
+
 	if s.dnsIntegration != nil {
 		s.appliedMu.Lock()
 		hadApplied := s.applied.listenIP != "" || len(s.applied.suffixes) > 0
@@ -424,22 +454,36 @@ func (s *Server) cleanup() {
 // startAutoRoutes watches the agent's route-watch stream (push) over the
 // SOCKS5 endpoint and applies route/host/DNS state on each snapshot. When the
 // agent does not support route-watch, autoroutes simply does not start.
+//
+// The watcher pins its SOCKS5 client at construction, so it must be
+// restarted when the SOCKS5 config changes (Reload does this). Starting a
+// new watcher cancels the previous one.
 func (s *Server) startAutoRoutes(ctx context.Context) {
 	cfg := s.cfg.Load()
 
 	watcher := autoroutes.NewWatcher(
-		s.createSOCKS5Client(),
+		s.createSOCKS5Client(cfg),
 		s.ifaceName(),
 		s.onDashboardUpdate,
 		s.logger,
 	)
+
+	wctx, wcancel := context.WithCancel(ctx)
+	handle := &watcherHandle{ctx: wctx, cancel: wcancel}
+	s.servicesMu.Lock()
+	if s.watcher != nil {
+		s.watcher.cancel()
+	}
+	s.watcher = handle
+	s.servicesMu.Unlock()
+
 	s.logger.Info("starting autoroutes route-watch over SOCKS5",
 		zap.String("server", cfg.SOCKS5.Server),
 	)
 
 	go func() {
 		for {
-			if ctx.Err() != nil {
+			if wctx.Err() != nil {
 				return
 			}
 			// watcher.Run returns only on context cancellation or
@@ -456,17 +500,17 @@ func (s *Server) startAutoRoutes(ctx context.Context) {
 						err = fmt.Errorf("panic: %v", r)
 					}
 				}()
-				return watcher.Run(ctx)
+				return watcher.Run(wctx)
 			}()
 			if errors.Is(err, autoroutes.ErrUnsupported) {
 				s.logger.Error("agent does not support route-watch; autoroutes disabled")
 				return
 			}
-			if err == nil || ctx.Err() != nil {
+			if err == nil || wctx.Err() != nil {
 				return
 			}
 			select {
-			case <-ctx.Done():
+			case <-wctx.Done():
 				return
 			case <-time.After(5 * time.Second):
 			}
@@ -739,21 +783,24 @@ func (s *Server) Reload(cfg *config.Config) error {
 
 	oldCfg := s.cfg.Load()
 	if s.socks5ConfigChanged(oldCfg, cfg) {
-		s.network.socks5Client = socks5.NewClientWithOptions(
-			cfg.SOCKS5.Server,
-			socks5.NewAuthenticator(cfg.SOCKS5.Username, cfg.SOCKS5.Password),
-			cfg.SOCKS5.Timeout,
-			cfg.SOCKS5.KeepAlive,
-			socks5.ClientOptions{
-				Transport: cfg.SOCKS5.Transport,
-				WSPath:    cfg.SOCKS5.WSPath,
-			},
-		)
+		s.network.socks5Client = s.createSOCKS5Client(cfg)
 		s.network.tcpForwarder.UpdateClient(s.network.socks5Client)
 		s.network.udpForwarder.UpdateClient(s.network.socks5Client)
 		s.network.rawUDPForwarder.UpdateClient(s.network.socks5Client)
 		s.network.icmpForwarder.UpdateClient(s.network.socks5Client)
 		s.logger.Info("SOCKS5 client updated", zap.String("server", cfg.SOCKS5.Server))
+
+		// The autoroutes watcher pins its SOCKS5 client at construction;
+		// restart it so it reconnects to the new endpoint instead of the
+		// old one forever.
+		if cfg.AutoRoutes.Enabled {
+			s.servicesMu.Lock()
+			svcCtx := s.servicesCtx
+			s.servicesMu.Unlock()
+			if svcCtx != nil {
+				s.startAutoRoutes(svcCtx)
+			}
+		}
 	}
 
 	s.cfg.Store(cfg)
@@ -772,7 +819,38 @@ func (s *Server) Reload(cfg *config.Config) error {
 		}
 	}
 
+	// Sections Reload cannot apply live: warn so the operator knows a
+	// restart is required instead of assuming the change took effect.
+	if sections := restartRequiredChanges(oldCfg, cfg); len(sections) > 0 {
+		s.logger.Warn("config reloaded, but changes to these sections require a daemon restart to take effect",
+			zap.Strings("sections", sections),
+		)
+	}
+
 	return nil
+}
+
+// restartRequiredChanges returns the names of config sections that changed
+// between oldCfg and newCfg but are only applied at daemon startup: tun.*,
+// admin.*, dns_integration, autoroutes.*, and logging.*.
+func restartRequiredChanges(oldCfg, newCfg *config.Config) []string {
+	var changed []string
+	if !reflect.DeepEqual(oldCfg.TUN, newCfg.TUN) {
+		changed = append(changed, "tun")
+	}
+	if !reflect.DeepEqual(oldCfg.Admin, newCfg.Admin) {
+		changed = append(changed, "admin")
+	}
+	if oldCfg.DNSIntegration != newCfg.DNSIntegration {
+		changed = append(changed, "dns_integration")
+	}
+	if !reflect.DeepEqual(oldCfg.AutoRoutes, newCfg.AutoRoutes) {
+		changed = append(changed, "autoroutes")
+	}
+	if !reflect.DeepEqual(oldCfg.Logging, newCfg.Logging) {
+		changed = append(changed, "logging")
+	}
+	return changed
 }
 
 // socks5ConfigChanged checks if SOCKS5 configuration has changed
@@ -780,6 +858,8 @@ func (s *Server) socks5ConfigChanged(oldCfg, newCfg *config.Config) bool {
 	return newCfg.SOCKS5.Server != oldCfg.SOCKS5.Server ||
 		newCfg.SOCKS5.Username != oldCfg.SOCKS5.Username ||
 		newCfg.SOCKS5.Password != oldCfg.SOCKS5.Password ||
+		newCfg.SOCKS5.Timeout != oldCfg.SOCKS5.Timeout ||
+		newCfg.SOCKS5.KeepAlive != oldCfg.SOCKS5.KeepAlive ||
 		newCfg.SOCKS5.Transport != oldCfg.SOCKS5.Transport ||
 		newCfg.SOCKS5.WSPath != oldCfg.SOCKS5.WSPath
 }
@@ -804,6 +884,9 @@ func (s *Server) ReloadFromDisk() error {
 	cfg, err := config.Load(s.configPath)
 	if err != nil {
 		return fmt.Errorf("failed to reload config: %w", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("refusing to reload invalid config: %w", err)
 	}
 	return s.Reload(cfg)
 }
@@ -1068,7 +1151,7 @@ func (s *Server) TraceRoute(dest string) (*api.RouteTraceResult, error) {
 // lookupMeshPath resolves the mesh path for ip from a one-shot SOCKS5 snapshot
 // (CmdSnapshot) over the agent's SOCKS5 endpoint.
 func (s *Server) lookupMeshPath(ctx context.Context, ip net.IP) (*autoroutes.PathResult, error) {
-	snap, err := s.createSOCKS5Client().Snapshot(ctx)
+	snap, err := s.createSOCKS5Client(s.cfg.Load()).Snapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
