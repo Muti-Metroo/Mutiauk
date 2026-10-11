@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -178,6 +179,87 @@ func TestBidirectionalCopy(t *testing.T) {
 		// Expected
 	case <-time.After(time.Second):
 		t.Error("relay did not complete in time")
+	}
+}
+
+// TestBidirectionalCopy_HalfClose verifies that a local FIN is propagated to
+// the remote as a half-close, and that the in-flight response still travels
+// back to the client before the relay closes both connections.
+func TestBidirectionalCopy_HalfClose(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Backend server: read the request until EOF (the propagated FIN), then
+	// send the response and close.
+	backend, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("backend listen failed: %v", err)
+	}
+	defer backend.Close()
+
+	go func() {
+		conn, err := backend.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		io.Copy(io.Discard, conn) // drains until the client FIN arrives
+		conn.Write([]byte("response after FIN"))
+	}()
+
+	// Relay side: accept the local conn, dial the backend, relay both ways.
+	frontend, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("frontend listen failed: %v", err)
+	}
+	defer frontend.Close()
+
+	relayDone := make(chan error, 1)
+	go func() {
+		local, err := frontend.Accept()
+		if err != nil {
+			relayDone <- err
+			return
+		}
+		remote, err := net.Dial("tcp", backend.Addr().String())
+		if err != nil {
+			relayDone <- err
+			return
+		}
+		relayDone <- bidirectionalCopy(ctx, local, remote, DefaultTCPBufferSize)
+	}()
+
+	// Client: send a request, half-close the write side, then expect the
+	// response followed by EOF.
+	client, err := net.Dial("tcp", frontend.Addr().String())
+	if err != nil {
+		t.Fatalf("client dial failed: %v", err)
+	}
+	defer client.Close()
+	client.SetDeadline(time.Now().Add(3 * time.Second))
+
+	if _, err := client.Write([]byte("request")); err != nil {
+		t.Fatalf("client write failed: %v", err)
+	}
+	if err := client.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatalf("client CloseWrite failed: %v", err)
+	}
+
+	resp, err := io.ReadAll(client)
+	if err != nil {
+		t.Fatalf("client read failed: %v", err)
+	}
+	if string(resp) != "response after FIN" {
+		t.Errorf("response = %q, want %q", resp, "response after FIN")
+	}
+
+	select {
+	case err := <-relayDone:
+		if err != nil {
+			t.Errorf("relay returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("relay did not complete after both directions finished")
 	}
 }
 

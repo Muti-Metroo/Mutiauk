@@ -112,7 +112,7 @@ Expose: Mesh peer -> Muti Metroo agent listener -> Muti Metroo -> SOCKS5 CmdExpo
 
 **stack/intercept_endpoint.go** - Wraps gVisor's link endpoint to intercept UDP packets at the link layer. This is necessary because gVisor's `udp.NewForwarder` only handles packets destined for local addresses, not outbound traffic. The intercept endpoint parses raw IP/UDP headers and passes payloads to the `RawUDPHandler`. Fragmented IPv4 datagrams (MF set or non-zero offset) are never intercepted - they are dropped with a rate-limited warning since the intercept path does not reassemble; IPv6 fragments fall through to gVisor, which also cannot deliver them (no UDP endpoint is registered).
 
-**proxy/tcp_forwarder.go** - Implements `TCPHandler` interface. Establishes SOCKS5 CONNECT and performs bidirectional data copy. Supports `PreConnect` for accurate port scanning.
+**proxy/tcp_forwarder.go** - Implements `TCPHandler` interface. Establishes SOCKS5 CONNECT and performs bidirectional data copy. Supports `PreConnect` for accurate port scanning. The copy loop (`proxy/common.go`) propagates TCP half-close: a local FIN triggers `CloseWrite` on the mesh connection so request/response servers still deliver their in-flight reply; the WebSocket transport has no half-close semantics and falls back to a full close.
 
 **proxy/udp_forwarder.go** - Legacy UDP handler using gVisor's UDP forwarder (for local-destined packets).
 

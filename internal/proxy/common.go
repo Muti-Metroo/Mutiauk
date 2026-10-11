@@ -43,32 +43,73 @@ func newSOCKS5Address(ip net.IP, port uint16) *socks5.Address {
 	}
 }
 
+// closeWriter is implemented by connections that support half-close
+// (gonet.TCPConn on the TUN side, *net.TCPConn on the plain-TCP SOCKS5
+// side). The WebSocket transport (wsConn) has no half-close semantics in
+// its data plane.
+type closeWriter interface {
+	CloseWrite() error
+}
+
+// closeWrite propagates an EOF to the write side of c. For connections
+// without half-close support (the WebSocket transport) it falls back to a
+// full close: the WS data plane cannot signal FIN without closing the
+// connection, so for request/response flows over WS the in-flight response
+// may be lost - the same behavior as before half-close support was added.
+func closeWrite(c net.Conn) {
+	if cw, ok := c.(closeWriter); ok {
+		cw.CloseWrite()
+		return
+	}
+	c.Close()
+}
+
 // bidirectionalCopy performs bidirectional data copy between two connections.
-// It returns when either direction completes or the context is canceled.
-// Both connections are closed to unblock any in-flight io.Copy goroutines.
+// Each direction propagates a clean EOF as a half-close (CloseWrite) to the
+// other connection, so a local FIN reaches the remote server while an
+// in-flight response is still delivered back. A copy error tears the other
+// direction down to unblock its reader. It returns once both directions are
+// done or the context is canceled; both connections are closed on return.
 func bidirectionalCopy(ctx context.Context, local, remote net.Conn, bufferSize int) error {
 	errCh := make(chan error, 2)
 
 	go func() {
 		_, err := io.CopyBuffer(remote, local, make([]byte, bufferSize))
+		if err == nil {
+			closeWrite(remote)
+		} else {
+			remote.Close()
+		}
 		errCh <- err
 	}()
 
 	go func() {
 		_, err := io.CopyBuffer(local, remote, make([]byte, bufferSize))
+		if err == nil {
+			closeWrite(local)
+		} else {
+			local.Close()
+		}
 		errCh <- err
 	}()
 
-	select {
-	case <-ctx.Done():
-		local.Close()
-		remote.Close()
-		return ctx.Err()
-	case err := <-errCh:
-		local.Close()
-		remote.Close()
-		return err
+	var firstErr error
+	for i := 0; i < 2; i++ {
+		select {
+		case <-ctx.Done():
+			local.Close()
+			remote.Close()
+			return ctx.Err()
+		case err := <-errCh:
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
 	}
+
+	local.Close()
+	remote.Close()
+	return firstErr
 }
 
 // clientHolder provides thread-safe access to a SOCKS5 client.
