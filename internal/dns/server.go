@@ -205,24 +205,38 @@ func (s *Server) Listen(ctx context.Context, addr string) error {
 		}
 	}()
 
+	// Collect the startup outcome of both listeners. On any failure or
+	// cancellation, wait for BOTH goroutines to settle before Shutdown:
+	// miekg/dns ignores Shutdown for a server that has not bound yet, so
+	// tearing down early leaks whichever listener is still starting.
+	var udpErr, tcpErr error
+	udpGot, tcpGot := false, false
 	select {
-	case err := <-udpReady:
-		if err != nil {
-			_ = s.tcp.Shutdown()
-			return err
-		}
+	case udpErr = <-udpReady:
+		udpGot = true
 	case <-ctx.Done():
-		return ctx.Err()
+		udpErr = ctx.Err()
 	}
-	select {
-	case err := <-tcpReady:
-		if err != nil {
-			_ = s.udp.Shutdown()
-			return err
+	if udpErr == nil {
+		select {
+		case tcpErr = <-tcpReady:
+			tcpGot = true
+		case <-ctx.Done():
+			tcpErr = ctx.Err()
 		}
-	case <-ctx.Done():
-		_ = s.udp.Shutdown()
-		return ctx.Err()
+	}
+	if udpErr != nil || tcpErr != nil {
+		if !udpGot {
+			<-udpReady
+		}
+		if !tcpGot {
+			<-tcpReady
+		}
+		s.shutdown()
+		if udpErr != nil {
+			return udpErr
+		}
+		return tcpErr
 	}
 
 	s.logger.Info("dns server listening", zap.String("addr", addr))

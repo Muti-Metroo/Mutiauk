@@ -349,3 +349,46 @@ func TestMatchesAnySuffix(t *testing.T) {
 		}
 	}
 }
+
+// TestListenContextCancelReleasesAddresses is the regression guard for a
+// listener leak: Listen's ctx.Done branches used to return without shutting
+// down the UDP/TCP servers that had already started, so a cancelled startup
+// left port 53 held by orphaned listeners.
+func TestListenContextCancelReleasesAddresses(t *testing.T) {
+	s, err := New(Config{Logger: zap.NewNop()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Grab a free port, then release it for the DNS server.
+	probe, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	addr := probe.LocalAddr().String()
+	probe.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled before Listen starts anything
+
+	if err := s.Listen(ctx, addr); err == nil {
+		t.Fatal("Listen with pre-cancelled ctx returned nil error")
+	}
+
+	// Give any orphaned listener goroutine time to bind (with the leak,
+	// the servers bind shortly after Listen returns). Afterwards both
+	// protocols must be bindable: nothing may be left running.
+	time.Sleep(200 * time.Millisecond)
+
+	udpConn, udpErr := net.ListenPacket("udp", addr)
+	if udpErr == nil {
+		udpConn.Close()
+	}
+	tcpLn, tcpErr := net.Listen("tcp", addr)
+	if tcpErr == nil {
+		tcpLn.Close()
+	}
+	if udpErr != nil || tcpErr != nil {
+		t.Fatalf("addresses still held after cancelled Listen: udp=%v tcp=%v", udpErr, tcpErr)
+	}
+}
