@@ -3,6 +3,7 @@ package stack
 import (
 	"errors"
 	"net"
+	"time"
 
 	"go.uber.org/zap"
 	"gvisor.dev/gvisor/pkg/buffer"
@@ -29,6 +30,7 @@ type interceptEndpoint struct {
 	icmpHandler ICMPPacketHandler
 	tunWriter   func([]byte) (int, error)
 	logger      *zap.Logger
+	fragLog     *logRateLimiter
 }
 
 // newInterceptEndpoint creates a new intercepting link endpoint
@@ -39,6 +41,25 @@ func newInterceptEndpoint(inner stack.LinkEndpoint, udpHandler UDPPacketHandler,
 		icmpHandler:  icmpHandler,
 		tunWriter:    tunWriter,
 		logger:       logger,
+		fragLog:      newLogRateLimiter(5 * time.Second),
+	}
+}
+
+// isFragmentedIPv4 reports whether the packet is an IPv4 fragment of a larger
+// datagram (MF flag set or non-zero fragment offset).
+func isFragmentedIPv4(ipHdr header.IPv4) bool {
+	return ipHdr.More() || ipHdr.FragmentOffset() != 0
+}
+
+// logFragmentDrop emits a rate-limited warning for a dropped fragment.
+func (e *interceptEndpoint) logFragmentDrop(protocol string, srcIP, dstIP net.IP) {
+	if suppressed, ok := e.fragLog.allow(); ok {
+		e.logger.Warn("dropping fragmented packet: reassembly is not supported by the intercept path",
+			zap.String("protocol", protocol),
+			zap.String("src", srcIP.String()),
+			zap.String("dst", dstIP.String()),
+			zap.Int("suppressed", suppressed),
+		)
 	}
 }
 
@@ -92,6 +113,19 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 
 		// Check for UDP
 		if ipHdr.Protocol() == uint8(header.UDPProtocolNumber) {
+			// Never intercept fragments: non-first fragments carry no UDP
+			// header, so their payload bytes would be misread as port
+			// numbers, and a first fragment would be forwarded as if it were
+			// the whole datagram. The intercept path does not reassemble, and
+			// gVisor would reassemble only to drop the datagram (no UDP
+			// endpoint is registered), emitting a misleading ICMP port
+			// unreachable - so drop the fragment here instead.
+			if isFragmentedIPv4(ipHdr) {
+				srcAddr := ipHdr.SourceAddress()
+				dstAddr := ipHdr.DestinationAddress()
+				d.ep.logFragmentDrop("udp", net.IP(srcAddr.AsSlice()), net.IP(dstAddr.AsSlice()))
+				return
+			}
 			if len(data) >= ipHdrLen+header.UDPMinimumSize {
 				udpHdr := header.UDP(data[ipHdrLen:])
 				payload := data[ipHdrLen+header.UDPMinimumSize:]
@@ -117,6 +151,14 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 
 		// Check for ICMP Echo Request
 		if ipHdr.Protocol() == uint8(header.ICMPv4ProtocolNumber) {
+			// Fragments of an ICMP message must not be interpreted as a
+			// complete echo request; drop them (see the UDP case above).
+			if isFragmentedIPv4(ipHdr) {
+				srcAddr := ipHdr.SourceAddress()
+				dstAddr := ipHdr.DestinationAddress()
+				d.ep.logFragmentDrop("icmp", net.IP(srcAddr.AsSlice()), net.IP(dstAddr.AsSlice()))
+				return
+			}
 			if len(data) >= ipHdrLen+header.ICMPv4MinimumSize {
 				icmpHdr := header.ICMPv4(data[ipHdrLen:])
 				// Only handle Echo Request (Type 8)
@@ -158,6 +200,11 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 
 	// Handle UDP
 	if ipHdr.Protocol() == uint8(header.UDPProtocolNumber) {
+		// Never intercept fragments (see the unparsed branch above).
+		if isFragmentedIPv4(ipHdr) {
+			d.ep.logFragmentDrop("udp", srcIP, dstIP)
+			return
+		}
 		// Get transport header
 		transHdr := pkt.TransportHeader()
 		if transHdr.View().Size() < header.UDPMinimumSize {
@@ -189,6 +236,11 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 
 	// Handle ICMP Echo Request
 	if ipHdr.Protocol() == uint8(header.ICMPv4ProtocolNumber) {
+		// Never intercept fragments (see the unparsed branch above).
+		if isFragmentedIPv4(ipHdr) {
+			d.ep.logFragmentDrop("icmp", srcIP, dstIP)
+			return
+		}
 		// Get transport header (contains ICMP data)
 		transHdr := pkt.TransportHeader()
 		if transHdr.View().Size() < header.ICMPv4MinimumSize {
@@ -382,7 +434,13 @@ func buildICMPv4EchoReply(srcIP, dstIP net.IP, id, seq uint16, payload []byte) [
 	return pkt
 }
 
-// handleIPv6Packet handles IPv6 packet interception
+// handleIPv6Packet handles IPv6 packet interception.
+//
+// Fragmented IPv6 datagrams (NextHeader == 44, fragment header) are not
+// intercepted: they fall through to gVisor, which reassembles them but has
+// no UDP endpoint to deliver them to (no UDP forwarder is registered and
+// forwarding is disabled), so fragmented IPv6 UDP effectively fails rather
+// than being corrupted. Reassembly in the intercept path is out of scope.
 func (d *interceptDispatcher) handleIPv6Packet(pkt *stack.PacketBuffer) {
 	// Get the network header - may not be parsed yet
 	netHdr := pkt.NetworkHeader()
