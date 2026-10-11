@@ -11,6 +11,24 @@ import (
 
 // --- BuildUDPResponse Tests ---
 
+func TestEffectiveMaxTCPInFlight(t *testing.T) {
+	if got := (Config{}).effectiveMaxTCPInFlight(); got != defaultMaxTCPInFlight {
+		t.Errorf("default effectiveMaxTCPInFlight = %d, want %d", got, defaultMaxTCPInFlight)
+	}
+	if got := (Config{MaxTCPInFlight: 64}).effectiveMaxTCPInFlight(); got != 64 {
+		t.Errorf("effectiveMaxTCPInFlight = %d, want 64", got)
+	}
+	// Negative values fall back to the default.
+	if got := (Config{MaxTCPInFlight: -1}).effectiveMaxTCPInFlight(); got != defaultMaxTCPInFlight {
+		t.Errorf("negative effectiveMaxTCPInFlight = %d, want %d", got, defaultMaxTCPInFlight)
+	}
+	// The cap must stay bounded: 65535 allowed a SYN scan to amplify into
+	// tens of thousands of concurrent mesh connections.
+	if defaultMaxTCPInFlight > 4096 {
+		t.Errorf("defaultMaxTCPInFlight = %d, want a bounded value <= 4096", defaultMaxTCPInFlight)
+	}
+}
+
 func TestBuildUDPResponse_Basic(t *testing.T) {
 	srcIP := net.ParseIP("192.168.1.1").To4()
 	dstIP := net.ParseIP("10.0.0.1").To4()

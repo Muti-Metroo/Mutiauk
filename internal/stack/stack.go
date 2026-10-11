@@ -92,12 +92,34 @@ type Config struct {
 	// forwarded (the handler returns an error exposing ICMPUnreachableCodes).
 	ICMPErrorReplies bool
 	Logger           *zap.Logger
+	// MaxTCPInFlight caps concurrent pending TCP connections in the gVisor
+	// forwarder. Zero uses defaultMaxTCPInFlight.
+	MaxTCPInFlight int
 }
 
 const (
 	maxConcurrentUDP  = 1024
 	maxConcurrentICMP = 256
+
+	// defaultMaxTCPInFlight bounds concurrent pending TCP connections
+	// (received SYN, handshake not yet completed). Because PreConnect dials
+	// the mesh for every inbound SYN, an unbounded limit lets a port scan
+	// amplify into thousands of simultaneous mesh connections and SOCKS5
+	// handshakes. Beyond the cap gVisor drops the SYN (counted in
+	// TCP.ForwardMaxInFlightDrop), so excess scans time out instead of
+	// exhausting the agent; the RST-on-closed-port semantics of PreConnect
+	// are unaffected for connections under the cap.
+	defaultMaxTCPInFlight = 1024
 )
+
+// effectiveMaxTCPInFlight returns the configured in-flight TCP cap, or the
+// default when unset.
+func (c Config) effectiveMaxTCPInFlight() int {
+	if c.MaxTCPInFlight > 0 {
+		return c.MaxTCPInFlight
+	}
+	return defaultMaxTCPInFlight
+}
 
 // linkStarter starts any background work needed to drive the link endpoint.
 // On Linux the fdbased endpoint runs its own read loop, so this is a no-op;
@@ -241,8 +263,9 @@ func (s *Stack) Run(ctx context.Context) error {
 	s.runCtx = ctx
 	s.runCtxMu.Unlock()
 
-	// Set up TCP forwarder
-	tcpForwarder := tcp.NewForwarder(s.stack, 0, 65535, func(r *tcp.ForwarderRequest) {
+	// Set up TCP forwarder. The in-flight cap bounds the number of
+	// concurrent PreConnect mesh dials a SYN flood can trigger.
+	tcpForwarder := tcp.NewForwarder(s.stack, 0, s.cfg.effectiveMaxTCPInFlight(), func(r *tcp.ForwarderRequest) {
 		s.handleTCPForward(ctx, r)
 	})
 	s.stack.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpForwarder.HandlePacket)
