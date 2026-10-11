@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ type mockStateProvider struct {
 	traceErr    error
 	hosts       *HostListResult
 	reloadErr   error
+	mu          sync.Mutex // guards reloadCalls and stopCalls
 	reloadCalls int
 	stopCalls   int
 }
@@ -116,13 +118,29 @@ func (m *mockStateProvider) RemoveExpose(key string) error {
 }
 
 func (m *mockStateProvider) ReloadConfig() error {
+	m.mu.Lock()
 	m.reloadCalls++
+	m.mu.Unlock()
 	return m.reloadErr
 }
 
 func (m *mockStateProvider) RequestStop() error {
+	m.mu.Lock()
 	m.stopCalls++
+	m.mu.Unlock()
 	return nil
+}
+
+func (m *mockStateProvider) getReloadCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.reloadCalls
+}
+
+func (m *mockStateProvider) getStopCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.stopCalls
 }
 
 // testServer creates a test server on an OS-appropriate control endpoint
@@ -453,8 +471,8 @@ func TestDaemonReload(t *testing.T) {
 		if !res.Success {
 			t.Errorf("Reload() Success = false, message = %q", res.Message)
 		}
-		if state.reloadCalls != 1 {
-			t.Errorf("ReloadConfig called %d times, want 1", state.reloadCalls)
+		if state.getReloadCalls() != 1 {
+			t.Errorf("ReloadConfig called %d times, want 1", state.getReloadCalls())
 		}
 	})
 
@@ -487,11 +505,11 @@ func TestDaemonStop(t *testing.T) {
 
 	// RequestStop is scheduled ~50ms after the response is flushed.
 	deadline := time.Now().Add(2 * time.Second)
-	for state.stopCalls == 0 && time.Now().Before(deadline) {
+	for state.getStopCalls() == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if state.stopCalls != 1 {
-		t.Errorf("RequestStop called %d times, want 1", state.stopCalls)
+	if state.getStopCalls() != 1 {
+		t.Errorf("RequestStop called %d times, want 1", state.getStopCalls())
 	}
 }
 
