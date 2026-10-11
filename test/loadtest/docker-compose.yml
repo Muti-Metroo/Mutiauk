@@ -1,0 +1,94 @@
+# Load test environment for Mutiauk TUN via Muti Metroo tunnel
+# Architecture:
+#   kali (172.30.0.10) -> TUN -> mm-ingress (SOCKS5) -> mm-exit -> echo-server (172.31.0.100)
+#
+# Two networks:
+#   - client: 172.30.0.0/24 - where kali lives (isolated from targets)
+#   - target: 172.31.0.0/24 - where echo-server lives (routed via TUN)
+#
+# mm-ingress and mm-exit are on both networks to bridge traffic
+
+services:
+  # TCP/UDP echo server + iperf3
+  echo-server:
+    build:
+      context: ./echo-server
+    container_name: loadtest-echo
+    hostname: echo-server
+    networks:
+      target:
+        ipv4_address: 172.31.0.100
+    ports:
+      - "5000:5000"      # TCP echo
+      - "5001:5001/udp"  # UDP echo
+      - "5201:5201"      # iperf3
+    restart: unless-stopped
+
+  # Muti Metroo Exit Agent - on target network to reach echo-server
+  mm-exit:
+    build:
+      context: ../../../Muti Metroo
+      dockerfile: Dockerfile
+    container_name: loadtest-mm-exit
+    hostname: mm-exit
+    volumes:
+      - ./configs/mm-exit.yaml:/app/config.yaml:ro
+    networks:
+      - client
+      - target
+    ports:
+      - "18081:8080"     # HTTP API/Dashboard
+    restart: unless-stopped
+
+  # Muti Metroo Ingress Agent - on client network for kali
+  mm-ingress:
+    build:
+      context: ../../../Muti Metroo
+      dockerfile: Dockerfile
+    container_name: loadtest-mm-ingress
+    hostname: mm-ingress
+    volumes:
+      - ./configs/mm-ingress.yaml:/app/config.yaml:ro
+    networks:
+      - client
+    ports:
+      - "11080:1080"     # SOCKS5
+      - "18080:8080"     # HTTP API/Dashboard
+    depends_on:
+      - mm-exit
+    restart: unless-stopped
+
+  # Kali Linux with Mutiauk (includes iperf3) - on client network only
+  kali:
+    build:
+      context: ../..
+      dockerfile: test/loadtest/Dockerfile.kali
+    container_name: loadtest-kali
+    hostname: kali
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    volumes:
+      - ./configs/mutiauk.yaml:/etc/mutiauk/config.yaml:ro
+      - ./scripts:/scripts:ro
+    networks:
+      client:
+        ipv4_address: 172.30.0.10
+    depends_on:
+      - mm-ingress
+      - echo-server
+    stdin_open: true
+    tty: true
+
+networks:
+  client:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  target:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24

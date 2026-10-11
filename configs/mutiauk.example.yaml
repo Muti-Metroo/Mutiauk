@@ -1,0 +1,211 @@
+# Mutiauk Configuration Example
+# Copy this file to /etc/mutiauk/config.yaml and customize
+
+daemon:
+  # PID file location
+  pid_file: /var/run/mutiauk.pid
+  # Unix socket for CLI communication (future use)
+  socket_path: /var/run/mutiauk.sock
+  # Health check HTTP port (0 to disable)
+  health_port: 0
+  # Host:port that `mutiauk status` opens through the SOCKS5
+  # tunnel to verify TCP routing. Default: example.com:80. Set this
+  # to an in-mesh address for air-gapped or regulated networks where
+  # external traffic is blocked (otherwise the probe permanently
+  # FAILs and masks real outages).
+  # status_probe_target: "example.com:80"
+
+tun:
+  # TUN interface name
+  name: tun0
+  # Maximum transmission unit
+  mtu: 1400
+  # IPv4 address with CIDR notation
+  address: 10.200.200.1/24
+  # IPv6 address with CIDR notation (optional)
+  address6: fd00:200::1/64
+
+socks5:
+  # SOCKS5 proxy server address
+  # For Docker on Mac: host.docker.internal:1080
+  # For local testing: 127.0.0.1:1080
+  # For WebSocket: Use wss:// URL (e.g., wss://relay.example.com:8443/socks5)
+  server: 127.0.0.1:1080
+  # Username for authentication (leave empty for no auth)
+  username: ""
+  # Password for authentication (leave empty for no auth).
+  # The MUTIAUK_SOCKS5_PASSWORD env var, when set, overrides this
+  # value. Use it with systemd LoadCredential= or k8s
+  # secret-mounted env vars so the password never has to be
+  # written to /etc/mutiauk/config.yaml.
+  password: ""
+  # Connection timeout: caps TCP connect + SOCKS5 handshake. Not an
+  # idle timeout; KeepAlive (below) controls liveness on idle TCP
+  # sessions.
+  timeout: 30s
+  # Keepalive interval. With transport "tcp" this is the TCP keepalive
+  # interval on each SOCKS5-tunneled session; with "websocket" it is the
+  # WebSocket ping interval. Both detect dead peers and keep NAT/firewall
+  # state warm on idle connections.
+  keepalive: 60s
+  # Transport type: "tcp" (default) or "websocket".
+  # Use "websocket" to tunnel SOCKS5 over WebSocket when raw TCP is
+  # blocked. Precedence: if `server` starts with `ws://` or `wss://`,
+  # transport is auto-detected from the URL scheme and this explicit
+  # value is ignored.
+  #
+  # WARNING: the WebSocket transport carries TCP and ICMP only. The UDP
+  # data plane (UDP ASSOCIATE) ALWAYS uses a raw UDP socket to the agent
+  # (`server` host), even when transport is "websocket". If the agent is
+  # reachable only via WebSocket (e.g. behind a CDN or a TCP-only
+  # proxy), UDP traffic - including DNS through the tunnel - will not
+  # work. UDP-over-WebSocket framing is not implemented.
+  transport: tcp
+  # WebSocket path (default: "/socks5")
+  # Only used when transport is "websocket" and server is not a full URL
+  ws_path: /socks5
+
+# Routes to forward through the SOCKS5 proxy
+routes:
+  # Example: Internal network
+  - destination: 10.0.0.0/8
+    comment: "Internal network"
+    enabled: true
+
+  # Example: Private network
+  - destination: 192.168.0.0/16
+    comment: "Private network"
+    enabled: true
+
+  # Example: Specific target
+  # - destination: 203.0.113.0/24
+  #   comment: "Target network"
+  #   enabled: true
+
+# Automatic route fetching from Muti Metroo
+# When enabled, Mutiauk polls the Muti Metroo API to fetch routes
+# advertised by other agents and adds them to the local routing table.
+# These routes are ephemeral and not saved to the config file.
+#
+# When autoroutes is enabled, Mutiauk also runs a local mesh DNS
+# resolver bound to the TUN IPv4 address. The active TLD set
+# (mesh_hosts_suffixes) and the host list are fetched from the agent
+# on each poll; the host's DNS resolver is configured automatically.
+# Use "mutiauk host list" to inspect what the daemon currently
+# serves. Hostnames and suffixes are managed centrally on the Muti Metroo
+# agent (POST /hosts/manage and POST /hosts/suffixes/manage).
+
+# How mesh-host DNS is wired into the host resolver.
+#   auto         - resolvectl (systemd-resolved) preferred; fall back to
+#                  NetworkManager's dnsmasq plugin; otherwise no host wiring.
+#   resolvectl   - require systemd-resolved.
+#   nm-dnsmasq   - require NetworkManager configured with dns=dnsmasq.
+#   none         - leave host DNS alone; configure your resolver manually.
+# Default: auto.
+# dns_integration: auto
+
+autoroutes:
+  # Receive routes, mesh hosts, and DNS suffixes from the Muti Metroo agent over the
+  # same SOCKS5 endpoint (socks5.server) used for traffic. Authorization is the
+  # SOCKS5 handshake; there is no separate URL or token.
+  enabled: false
+
+  # Optional upper bound for agent outages. When no route-watch snapshot has
+  # arrived for this long, auto-installed routes and mesh DNS state are
+  # flushed; the next snapshot re-installs everything. Unset (or 0) keeps
+  # routes through agent flaps indefinitely - the default. The last-snapshot
+  # age is visible in `mutiauk status` and the admin dashboard either way.
+  # stale_timeout: 10m
+
+# Expose: publish local services to the mesh over the SOCKS5 endpoint
+# (socks5.server) using the Muti Metroo CmdExpose stream - the same single
+# endpoint used for the data plane. Each entry registers a routing key
+# on Muti Metroo; when a mesh forward stream arrives for the key, Muti Metroo pipes
+# it back over the stream and Mutiauk serves the local folder or
+# dials the local TCP target. Authorization is the SOCKS5 handshake; no
+# separate URL or bearer token is needed.
+#
+# The folder server is strict: it returns an empty 404 for any path
+# that does not exactly resolve to a regular file under the root. No
+# directory listings, no index.html fallback, no splash page.
+expose:
+  enabled: false
+  # reconnect_min: 1s
+  # reconnect_max: 30s
+  # keepalive_period: 25s
+  # Per-key concurrent-stream cap. The (Max+1)-th OPEN for any
+  # routing key is refused with an OPEN_ACK error so a misbehaving
+  # mesh peer cannot exhaust file descriptors. Default: 256.
+  # max_streams_per_key: 256
+  # Per-stream receive-buffer cap. The protocol has no flow control,
+  # so this is the only backpressure: hitting the cap closes the
+  # stream cleanly. Lower this on resource-constrained hosts.
+  # Default: 16777216 (16 MiB). Minimum: 65536 (64 KiB).
+  # max_buffered_bytes: 16777216
+  forwards: []
+    # - key: op-docs
+    #   type: folder
+    #   path: /srv/docs
+    #   comment: "operator runbook"
+    # - key: op-ssh
+    #   type: tcp
+    #   target: 127.0.0.1:22
+    #   comment: "ssh to laptop"
+
+# Local admin HTTP interface: a browser dashboard plus JSON endpoints
+# for inspecting the running daemon (applied routes, exposed
+# folders/ports, Muti Metroo agent connection status) and managing local
+# exposing. Enabled by default. Bound to loopback only, and every
+# endpoint requires a per-install bearer token stored in the admin-token
+# file next to this config (created with mode 0600 on first start).
+# Run `sudo mutiauk admin` to print a dashboard login URL; scripted
+# access sends the token as "Authorization: Bearer <token>".
+admin:
+  # enabled: true
+  # Loopback host:port. Defaults to 127.0.0.1:48088. The daemon also
+  # best-effort binds the matching IPv6/IPv4 loopback on the same port.
+  # Only loopback addresses (127.0.0.0/8, ::1) are accepted.
+  listen: 127.0.0.1:48088
+
+# NAT table configuration
+nat:
+  # Maximum number of tracked connections.
+  #
+  # Sizing rule of thumb: ~4 concurrent connections per active
+  # device peak. A 5,000-IoT-device hospital fleet wants 20K-32K
+  # entries; a 50,000-endpoint campus wants 200K+. Hitting the cap
+  # silently drops new connections, so size with headroom.
+  table_size: 65536
+  # TCP connection idle timeout.
+  #
+  # Entries whose forwarding handler is still active are never
+  # reaped, so long-lived SSH sessions and monitoring sockets are
+  # safe regardless of this value. The timeout only bounds how
+  # long an entry may linger after its handler is gone (a leak
+  # safety net), so the 1h default rarely needs changing. The
+  # daemon's own TCP keepalive (socks5.keepalive) is still the
+  # liveness signal for dead peers.
+  tcp_timeout: 1h
+  # UDP connection idle timeout.
+  udp_timeout: 5m
+  # Garbage collection interval.
+  gc_interval: 1m
+
+# ICMP (ping) handling
+icmp:
+  # When an intercepted ping cannot be forwarded through the mesh
+  # (the exit agent has no unprivileged ICMP socket, or ICMP is
+  # disabled there), reply to the local sender with an ICMP
+  # Destination Unreachable so `ping` fails fast instead of timing
+  # out. Only fires on forwarding-setup failures; a reachable host
+  # that simply does not answer still times out normally.
+  unreachable_replies: true
+
+# Logging configuration
+logging:
+  # Log level: debug, info, warn, error
+  level: info
+  # Output format: json or console
+  format: json
+  # Log output: stdout, stderr, or file path
+  output: stdout

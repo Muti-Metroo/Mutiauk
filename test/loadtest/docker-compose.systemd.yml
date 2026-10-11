@@ -1,0 +1,24 @@
+# Loadtest topology with the kali container swapped for an
+# Ubuntu+systemd image so we can verify the systemd-resolved
+# routing-domain integration. Apply on top of the base compose:
+#
+#   docker compose \
+#     -f test/loadtest/docker-compose.yml \
+#     -f test/loadtest/docker-compose.systemd.yml \
+#     up -d --build
+services:
+  kali:
+    build:
+      context: ../..
+      dockerfile: test/loadtest/Dockerfile.kali-systemd
+    privileged: true
+    cgroup: host
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    volumes:
+      - ./configs/mutiauk.yaml:/etc/mutiauk/config.yaml:ro
+      - ./scripts:/scripts:ro
+    stop_signal: SIGRTMIN+3
+    command: ["/lib/systemd/systemd"]

@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mutiauk - Admin</title>
+<link rel="stylesheet" href="/static/bootstrap.min.css">
+</head>
+<body>
+
+<nav class="navbar navbar-expand bg-body-tertiary border-bottom mb-4">
+  <div class="container">
+    <span class="navbar-brand mb-0 h1">Mutiauk <small class="text-secondary fw-normal fs-6">admin</small></span>
+    <span class="navbar-text" id="refresh">loading...</span>
+  </div>
+</nav>
+
+<main class="container pb-5">
+
+  <ul class="nav nav-tabs mb-3" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button" role="tab">Overview</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-routes" type="button" role="tab">Routes <span class="badge text-bg-secondary" id="routes-count">0</span><span class="badge text-bg-danger ms-1 d-none" id="routes-refused-count">0</span></button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-log" type="button" role="tab">Route log</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-expose" type="button" role="tab">Exposing <span class="badge text-bg-secondary" id="expose-count">0</span></button>
+    </li>
+  </ul>
+
+  <div class="tab-content">
+
+    <!-- Overview -->
+    <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
+      <div class="card mb-4">
+        <div class="card-header">Daemon</div>
+        <div class="card-body"><dl class="row mb-0" id="overview"></dl></div>
+      </div>
+      <div class="card">
+        <div class="card-header">Muti Metroo agent connection</div>
+        <div class="card-body"><dl class="row mb-0" id="agent"></dl></div>
+      </div>
+    </div>
+
+    <!-- Routes -->
+    <div class="tab-pane fade" id="tab-routes" role="tabpanel">
+      <div id="routes-refused" class="d-none alert alert-danger" role="alert">
+        <h6 class="alert-heading">Refused routes (not applied)</h6>
+        <p class="small mb-2">These routes were received but <strong>not installed</strong> because they cover the upstream SOCKS5 server's own address. Installing them would route Mutiauk's connection to its SOCKS server through the tunnel and break all networking. Fix the route on the Muti Metroo agent.</p>
+        <ul id="routes-refused-list" class="small mb-0"></ul>
+      </div>
+      <div class="card">
+        <div class="card-header">Applied routes</div>
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle mb-0">
+            <thead>
+              <tr><th>Destination</th><th>Source</th><th>Interface</th><th>State</th><th>Comment</th></tr>
+            </thead>
+            <tbody id="routes"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Route log -->
+    <div class="tab-pane fade" id="tab-log" role="tabpanel">
+      <div class="card">
+        <div class="card-header d-flex align-items-center">
+          <span>Route change log</span>
+          <span class="text-secondary small ms-2">live - added/removed routes appear here as they happen</span>
+          <button class="btn btn-sm btn-outline-secondary ms-auto" id="log-clear" type="button">Clear view</button>
+        </div>
+        <div class="card-body p-0">
+          <div id="routelog" class="font-monospace small p-3" style="height: 22rem; overflow-y: auto;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Exposing -->
+    <div class="tab-pane fade" id="tab-expose" role="tabpanel">
+      <div class="card">
+        <div class="card-header">Exposed forwards</div>
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle mb-0">
+            <thead>
+              <tr><th>Key</th><th>Type</th><th>Target</th><th>Persistence</th><th>Registered</th><th>Streams</th><th class="text-end">Action</th></tr>
+            </thead>
+            <tbody id="exposes"></tbody>
+          </table>
+        </div>
+        <div class="card-footer">
+          <form id="addform" class="row g-3 align-items-end">
+            <div class="col-sm-6 col-md-2">
+              <label class="form-label" for="f-key">Key</label>
+              <input class="form-control" type="text" id="f-key" name="key" required pattern="[a-zA-Z0-9._-]+" placeholder="op-docs">
+            </div>
+            <div class="col-sm-6 col-md-2">
+              <label class="form-label" for="f-type">Type</label>
+              <select class="form-select" id="f-type" name="type">
+                <option value="folder">folder</option>
+                <option value="tcp">tcp</option>
+              </select>
+            </div>
+            <div class="col-sm-6 col-md-3" id="wrap-path">
+              <label class="form-label" for="f-path">Path</label>
+              <input class="form-control" type="text" id="f-path" name="path" placeholder="/srv/docs">
+            </div>
+            <div class="col-sm-6 col-md-3 d-none" id="wrap-target">
+              <label class="form-label" for="f-target">Target</label>
+              <input class="form-control" type="text" id="f-target" name="target" placeholder="127.0.0.1:22">
+            </div>
+            <div class="col-sm-6 col-md-3">
+              <label class="form-label" for="f-comment">Comment</label>
+              <input class="form-control" type="text" id="f-comment" name="comment" placeholder="optional">
+            </div>
+            <div class="col-sm-6 col-md-2">
+              <button class="btn btn-primary w-100" type="submit">Add forward</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <p class="mt-2 mb-0">
+        <a class="text-secondary small" data-bs-toggle="collapse" href="#exposeHelp" role="button" aria-expanded="false" aria-controls="exposeHelp">
+          About permanent vs temporary forwards
+        </a>
+      </p>
+      <div class="collapse mt-2" id="exposeHelp">
+        <div class="card">
+          <div class="card-body small">
+            <p>
+              Forwards added here are <span class="badge text-bg-warning">temporary</span> (runtime): they are
+              dropped when the Mutiauk process restarts. Forwards declared in the config file are
+              <span class="badge text-bg-success">permanent</span> and survive restarts.
+            </p>
+            <p class="mb-1">To make a temporary forward permanent, add it to the <code>expose.forwards</code>
+              list in your config file, then reload:</p>
+            <pre class="mb-1"><code>expose:
+  enabled: true
+  forwards:
+    - key: my-key
+      type: folder        # or: tcp
+      path: /srv/share    # folder: absolute path
+      # target: 127.0.0.1:22   # tcp: host:port
+      comment: "optional"</code></pre>
+            <span class="text-secondary">Then: <code>sudo mutiauk daemon reload --config &lt;path&gt;</code> (or restart).</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<!-- Toast feedback -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3">
+  <div id="toast" class="toast align-items-center border-0" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="d-flex">
+      <div class="toast-body" id="toast-body"></div>
+      <button type="button" class="btn-close me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+    </div>
+  </div>
+</div>
+
+<!-- Remove-confirmation modal -->
+<div class="modal fade" id="rmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Stop exposing?</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">Stop exposing <code id="rm-key"></code>? Inbound mesh connections for this key will be refused.</div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="rm-confirm">Remove</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/bootstrap.bundle.min.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + ": " + r.status);
+  return r.json();
+}
+
+const badge = (text, variant) => '<span class="badge text-bg-' + variant + '">' + esc(text) + '</span>';
+const row = (cells) => "<tr>" + cells.map(c => "<td>" + c + "</td>").join("") + "</tr>";
+const mono = (s) => '<span class="font-monospace">' + esc(s) + "</span>";
+
+const toast = new bootstrap.Toast($("toast"), { delay: 4000 });
+function showToast(msg, variant) {
+  $("toast").className = "toast align-items-center border-0 text-bg-" + variant;
+  $("toast-body").textContent = msg;
+  toast.show();
+}
+
+function defList(el, pairs) {
+  el.innerHTML = pairs.map(([k, v]) =>
+    '<dt class="col-sm-3 text-secondary fw-normal">' + k + '</dt><dd class="col-sm-9">' + v + "</dd>").join("");
+}
+
+function renderOverview(s) {
+  const rc = s.route_count || {};
+  defList($("overview"), [
+    ["Status", s.running ? badge("running", "success") : badge("stopped", "danger")],
+    ["PID", mono(s.pid)],
+    ["Uptime", mono(s.uptime)],
+    ["TUN", mono(s.tun_name + " - " + s.tun_address)],
+    ["Config", mono(s.config_path)],
+    ["Routes", "config " + (rc.config||0) + " &middot; auto " + (rc.auto||0) + " &middot; manual " + (rc.manual||0) + " = <strong>" + (rc.total||0) + "</strong>"],
+  ]);
+}
+
+function renderAgent(a) {
+  const sock = (a.socks5_status === "connected" || a.socks5_status === "ok")
+    ? badge(a.socks5_status, "success") : badge(a.socks5_status || "unknown", "secondary");
+  const ar = a.autoroutes || {};
+  const arState = ar.enabled
+    ? badge("enabled", "success") + ' <span class="text-secondary">' + (ar.count||0) + " routes"
+      + (ar.last_snapshot_age ? ", last snapshot " + esc(ar.last_snapshot_age) + " ago" : ", no snapshot yet") + "</span>"
+    : badge("disabled", "secondary");
+  let exp;
+  if (!a.expose_enabled) exp = badge("disabled", "secondary");
+  else if (a.expose_connected) exp = badge("connected", "success") + (a.expose_connected_since ? ' <span class="text-secondary">since ' + esc(a.expose_connected_since) + "</span>" : "");
+  else exp = badge("disconnected", "danger") + (a.expose_error ? ' <span class="text-danger">' + esc(a.expose_error) + "</span>" : "");
+  defList($("agent"), [
+    ["SOCKS5 server", mono(a.socks5_server)],
+    ["SOCKS5 status", sock],
+    ["Autoroutes", arState],
+    ["Expose stream", exp],
+  ]);
+}
+
+function renderRoutes(res) {
+  const refused = (res && res.refused) || [];
+  const refusedBox = $("routes-refused");
+  const refusedCount = $("routes-refused-count");
+  if (refused.length) {
+    $("routes-refused-list").innerHTML = refused.map(r =>
+      "<li>" + mono(r.destination)
+      + (r.source ? " " + badge(r.source, "secondary") : "")
+      + " <span>" + esc(r.reason || "") + "</span></li>"
+    ).join("");
+    refusedBox.classList.remove("d-none");
+    refusedCount.textContent = refused.length;
+    refusedCount.classList.remove("d-none");
+  } else {
+    refusedBox.classList.add("d-none");
+    refusedCount.classList.add("d-none");
+  }
+
+  const rs = (res && res.routes) || [];
+  $("routes-count").textContent = rs.length;
+  const tb = $("routes");
+  if (!rs.length) { tb.innerHTML = '<tr><td colspan="5" class="text-secondary">No routes applied.</td></tr>'; return; }
+  tb.innerHTML = rs.map(r => row([
+    mono(r.destination),
+    badge(r.source, r.source === "auto" ? "success" : r.source === "config" ? "secondary" : "warning"),
+    mono(r.interface),
+    r.enabled ? badge("enabled", "success") : badge("disabled", "secondary"),
+    esc(r.comment || ""),
+  ])).join("");
+}
+
+function renderExposes(st) {
+  const fs = (st && st.forwards) || [];
+  $("expose-count").textContent = fs.length;
+  const tb = $("exposes");
+  if (!fs.length) { tb.innerHTML = '<tr><td colspan="7" class="text-secondary">No forwards exposed.</td></tr>'; return; }
+  const max = st.max_streams_per_key || 0;
+  tb.innerHTML = fs.map(f => {
+    const tgt = mono(f.type === "folder" ? f.path : f.target)
+      + (f.comment ? ' <span class="text-secondary">// ' + esc(f.comment) + "</span>" : "");
+    const perm = f.source === "config"
+      ? badge("permanent", "success") + ' <span class="text-secondary small">config</span>'
+      : badge("temporary", "warning") + ' <span class="text-secondary small">runtime</span>';
+    const reg = f.registered ? badge("yes", "success") : badge(f.error ? "error" : "no", f.error ? "danger" : "secondary")
+      + (f.error ? ' <span class="text-danger small">' + esc(f.error) + "</span>" : "");
+    const streams = mono(f.active_streams + (max ? " / " + max : ""));
+    const action = f.source === "config"
+      ? '<div class="text-end"><span class="text-secondary small" title="defined in config file">config-defined</span></div>'
+      : '<div class="text-end"><button class="btn btn-sm btn-outline-danger" data-rm="' + esc(f.key) + '">Remove</button></div>';
+    return row([mono(f.key), badge(f.type, "secondary"), tgt, perm, reg, streams, action]);
+  }).join("");
+  tb.querySelectorAll("button[data-rm]").forEach(b =>
+    b.addEventListener("click", () => askRemove(b.dataset.rm)));
+}
+
+// Route log: append new events (seq-deduplicated) to a scrolling window.
+let lastLogSeq = 0;
+let logHasContent = false;
+const actionVariant = { added: "success", removed: "danger", "failed-add": "warning", "failed-remove": "warning" };
+const PLACEHOLDER = '<span class="text-secondary">No route changes recorded yet.</span>';
+function renderRouteLog(res) {
+  const evs = (res && res.events) || [];
+  const log = $("routelog");
+  // The daemon's seq counter resets to 0 when it restarts. If the newest
+  // event we see is older than what we've already shown, the daemon was
+  // restarted (or its buffer reset): drop the stale view and re-ingest.
+  const maxSeq = evs.reduce((m, e) => Math.max(m, e.seq || 0), 0);
+  if (maxSeq < lastLogSeq) {
+    log.innerHTML = "";
+    lastLogSeq = 0;
+    logHasContent = false;
+  }
+  let appended = false;
+  for (const e of evs) {
+    if (e.seq <= lastLogSeq) continue;
+    lastLogSeq = e.seq;
+    if (!logHasContent) { log.innerHTML = ""; logHasContent = true; }
+    const ts = e.time ? new Date(e.time).toLocaleTimeString() : "";
+    const line = document.createElement("div");
+    line.innerHTML = '<span class="text-secondary">' + esc(ts) + "</span> "
+      + badge(e.action, actionVariant[e.action] || "secondary") + " "
+      + mono(e.destination)
+      + (e.source ? ' <span class="text-secondary">[' + esc(e.source) + "]</span>" : "")
+      + (e.comment ? ' <span class="text-secondary">' + esc(e.comment) + "</span>" : "")
+      + (e.error ? ' <span class="text-danger">' + esc(e.error) + "</span>" : "");
+    log.appendChild(line);
+    appended = true;
+  }
+  if (!logHasContent) log.innerHTML = PLACEHOLDER;
+  if (appended) log.scrollTop = log.scrollHeight;
+}
+$("log-clear").addEventListener("click", () => {
+  $("routelog").innerHTML = PLACEHOLDER;
+  logHasContent = false;
+});
+
+// Remove confirmation via Bootstrap modal.
+const rmModal = new bootstrap.Modal($("rmModal"));
+let rmKey = null;
+function askRemove(key) { rmKey = key; $("rm-key").textContent = key; rmModal.show(); }
+$("rm-confirm").addEventListener("click", async () => {
+  rmModal.hide();
+  if (!rmKey) return;
+  const key = rmKey; rmKey = null;
+  const r = await fetch("/api/expose/" + encodeURIComponent(key), {
+    method: "DELETE", headers: { "Content-Type": "application/json" },
+  });
+  const j = await r.json().catch(() => ({}));
+  if (j.success) { showToast("Removed " + key, "success"); refresh(); }
+  else showToast("Remove failed: " + (j.message || r.status), "danger");
+});
+
+// Toggle path vs target field based on forward type.
+$("f-type").addEventListener("change", e => {
+  const folder = e.target.value === "folder";
+  $("wrap-path").classList.toggle("d-none", !folder);
+  $("wrap-target").classList.toggle("d-none", folder);
+});
+
+$("addform").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const isFolder = fd.get("type") === "folder";
+  const body = {
+    key: fd.get("key"), type: fd.get("type"),
+    path: isFolder ? fd.get("path") : "",
+    target: isFolder ? "" : fd.get("target"),
+    comment: fd.get("comment"),
+  };
+  const r = await fetch("/api/expose", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (j.success) {
+    showToast("Exposed " + body.key + " (temporary)", "success");
+    e.target.reset();
+    $("wrap-path").classList.remove("d-none");
+    $("wrap-target").classList.add("d-none");
+    refresh();
+  } else {
+    showToast("Add failed: " + (j.message || r.status), "danger");
+  }
+});
+
+async function refresh() {
+  try {
+    const [status, agent, routes, expose, events] = await Promise.all([
+      getJSON("/api/status"), getJSON("/api/agent"),
+      getJSON("/api/routes"), getJSON("/api/expose"), getJSON("/api/route-events"),
+    ]);
+    renderOverview(status);
+    renderAgent(agent);
+    renderRoutes(routes);
+    renderExposes(expose);
+    renderRouteLog(events);
+    $("refresh").textContent = "updated " + new Date().toLocaleTimeString();
+  } catch (e) {
+    $("refresh").textContent = "error: " + e.message;
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

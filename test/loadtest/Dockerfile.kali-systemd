@@ -1,0 +1,81 @@
+# Test container for end-to-end verification of the mesh DNS feature.
+#
+# Unlike the plain Kali image, this one ships systemd as PID 1 with
+# systemd-resolved enabled, so we can exercise the resolvectl
+# routing-domain ("~mesh") integration that mutiauk uses on real
+# Kali installs.
+#
+# Run with:
+#   privileged: true
+#   cgroup: host
+#   tmpfs: [/run, /run/lock, /tmp]
+#   command: /lib/systemd/systemd
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV container=docker
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        systemd \
+        systemd-sysv \
+        systemd-resolved \
+        libnss-resolve \
+        dbus \
+        ca-certificates \
+        curl \
+        wget \
+        iproute2 \
+        iptables \
+        iputils-ping \
+        dnsutils \
+        netcat-openbsd \
+        nmap \
+        tcpdump \
+        iperf3 \
+        openssh-client \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Mask units that don't make sense inside a container so systemd
+# doesn't try to start them and fail. Leave systemd-resolved
+# unmasked: it is the whole point of this image.
+RUN systemctl mask \
+        systemd-udevd.service \
+        systemd-udevd-control.socket \
+        systemd-udevd-kernel.socket \
+        systemd-firstboot.service \
+        systemd-machine-id-commit.service
+
+# Bring systemd-resolved up on boot. We can't replace
+# /etc/resolv.conf because docker bind-mounts it from the host, so
+# instead route glibc lookups through systemd-resolved over D-Bus by
+# putting "resolve" before "dns" in nsswitch. This is the standard
+# libnss-resolve setup; the routing-domain logic ("~mesh") in
+# resolvectl applies to this NSS path the same way it would to the
+# stub resolver.
+RUN systemctl enable systemd-resolved.service \
+    && sed -ri 's/^hosts:.*$/hosts: files resolve [!UNAVAIL=return] dns/' /etc/nsswitch.conf \
+    && grep '^hosts:' /etc/nsswitch.conf
+
+# Tell systemd-resolved to forward unknown queries to docker's
+# embedded DNS (127.0.0.11). Without this, systemd-resolved knows
+# the upstream from /etc/resolv.conf but treats it as "foreign" and
+# refuses to use it ("No appropriate name servers"). The DNS=
+# directive registers it as a global resolver.
+RUN mkdir -p /etc/systemd/resolved.conf.d \
+    && printf '[Resolve]\nDNS=127.0.0.11\nDomains=~.\n' \
+        > /etc/systemd/resolved.conf.d/10-docker-dns.conf
+
+WORKDIR /app
+
+# mutiauk binary - built with `make build-linux` from the repo root.
+COPY bin/mutiauk-linux-amd64 /app/bin/mutiauk-linux-amd64
+RUN ln -s /app/bin/mutiauk-linux-amd64 /usr/local/bin/mutiauk
+
+# Ship the example/test configs.
+COPY configs/ /etc/mutiauk/
+
+STOPSIGNAL SIGRTMIN+3
+
+# systemd PID 1
+CMD ["/lib/systemd/systemd"]

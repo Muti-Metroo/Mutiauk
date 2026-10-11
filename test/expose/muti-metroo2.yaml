@@ -1,0 +1,22 @@
+agent:
+  id: "22222222222222222222222222222222"
+  display_name: "agent2-listener"
+  data_dir: "/app/data"
+  log_level: "debug"
+  log_format: "text"
+
+peers:
+  - id: "11111111111111111111111111111111"
+    transport: quic
+    address: "muti-metroo-agent:4433"
+
+socks5:
+  enabled: false
+
+forward:
+  endpoints: []
+  listeners:
+    - key: "op-docs"
+      address: "0.0.0.0:9090"
+    - key: "op-web"
+      address: "0.0.0.0:9091"
