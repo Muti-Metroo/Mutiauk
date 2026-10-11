@@ -3,6 +3,8 @@ package route
 import (
 	"fmt"
 	"net"
+
+	"go.uber.org/zap"
 )
 
 // Plan represents desired vs actual route state
@@ -79,33 +81,121 @@ func (m *Manager) Diff(desired []Route) (*Plan, error) {
 	return plan, nil
 }
 
-// Apply applies a plan
-func (m *Manager) Apply(plan *Plan) error {
+// ApplyResult reports the per-route outcome of an Apply. Added and Removed
+// hold the routes the kernel actually installed or withdrew (routes that were
+// already in the desired state are not changes); Failed holds the routes that
+// could not be applied, with the cause.
+type ApplyResult struct {
+	Added   []Route
+	Removed []Route
+	Failed  []ApplyFailure
+}
+
+// ApplyFailure is a single route that could not be applied.
+type ApplyFailure struct {
+	Route   Route
+	Removal bool // true when the failed operation was a removal
+	Err     error
+}
+
+// Apply applies a plan. Work is batched: one link refresh and one state-file
+// read + write for the whole plan, and kernel adds skip the per-route
+// existence lookup - the diff already established what the kernel holds, and
+// the kernel operations themselves remain idempotent. Per-route behavior
+// (removals first, continue past failures, aggregate error) is unchanged.
+func (m *Manager) Apply(plan *Plan) (*ApplyResult, error) {
+	res := &ApplyResult{}
 	if plan == nil || plan.IsEmpty() {
-		return nil
+		return res, nil
 	}
 
-	var errors []error
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// One link refresh for the whole batch instead of one per route.
+	linkErr := m.kernel.RefreshLink()
+
+	// Load persisted state once; it is written back once at the end.
+	state, stateErr := m.state.Load()
+	if stateErr != nil {
+		state = nil
+	}
+	dirty := false
 
 	// Remove routes first
 	for _, r := range plan.ToRemove {
-		if err := m.Remove(r); err != nil {
-			errors = append(errors, fmt.Errorf("failed to remove %s: %w", r.Destination.String(), err))
+		if linkErr != nil {
+			// No link: the kernel route is gone with the interface, so the
+			// removal reduces to a state update (same as Remove).
+			m.logger.Debug("link not found, route considered removed")
+			res.Removed = append(res.Removed, r)
+			dirty = true
+			delete(state, r.Destination.String())
+			continue
 		}
+		removed, err := m.kernel.Remove(r)
+		if err != nil {
+			res.Failed = append(res.Failed, ApplyFailure{Route: r, Removal: true, Err: err})
+			continue
+		}
+		if removed {
+			m.logger.Info("removed route",
+				zap.String("destination", r.Destination.String()),
+			)
+			res.Removed = append(res.Removed, r)
+		}
+		dirty = true
+		delete(state, r.Destination.String())
 	}
 
 	// Add routes
 	for _, r := range plan.ToAdd {
-		if err := m.Add(r); err != nil {
-			errors = append(errors, fmt.Errorf("failed to add %s: %w", r.Destination.String(), err))
+		if linkErr != nil {
+			res.Failed = append(res.Failed, ApplyFailure{Route: r, Err: linkErr})
+			continue
+		}
+		added, err := m.kernel.add(r, false)
+		if err != nil {
+			res.Failed = append(res.Failed, ApplyFailure{Route: r, Err: err})
+			continue
+		}
+		if added {
+			m.logger.Info("added route",
+				zap.String("destination", r.Destination.String()),
+				zap.String("interface", m.kernel.TUNName()),
+			)
+			res.Added = append(res.Added, r)
+		} else {
+			m.logger.Debug("route already exists",
+				zap.String("destination", r.Destination.String()),
+			)
+		}
+		dirty = true
+		r.Interface = m.kernel.TUNName()
+		r.Enabled = true
+		if state != nil {
+			state[r.Destination.String()] = r
 		}
 	}
 
-	if len(errors) > 0 {
-		return fmt.Errorf("apply had %d errors: %v", len(errors), errors)
+	if stateErr != nil {
+		return res, fmt.Errorf("apply could not persist route state: %w", stateErr)
+	}
+	if dirty {
+		if err := m.state.Save(state); err != nil {
+			return res, fmt.Errorf("apply could not persist route state: %w", err)
+		}
 	}
 
-	return nil
+	if len(res.Failed) > 0 {
+		errs := make([]error, 0, len(res.Failed))
+		for _, f := range res.Failed {
+			errs = append(errs, fmt.Errorf("%s: %w", f.Route.Destination.String(), f.Err))
+		}
+		return res, fmt.Errorf("apply had %d errors: %v", len(errs), errs)
+	}
+
+	return res, nil
 }
 
 // routeContains checks if network a contains network b

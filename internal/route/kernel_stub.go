@@ -49,6 +49,11 @@ func (k *KernelRoutes) RouteExists(destination *net.IPNet) (bool, error) {
 
 // Add is a no-op on non-Linux platforms.
 func (k *KernelRoutes) Add(r Route) (added bool, err error) {
+	return k.add(r, true)
+}
+
+// add is a no-op on non-Linux platforms.
+func (k *KernelRoutes) add(r Route, checkExists bool) (added bool, err error) {
 	return false, errNotSupported
 }
 

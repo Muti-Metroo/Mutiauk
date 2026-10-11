@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -63,14 +64,14 @@ func (f *RawUDPForwarder) HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP,
 		return fmt.Errorf("no SOCKS5 client configured")
 	}
 
-	key := addrKey(srcIP, srcPort)
+	key := addrPortFromIP(srcIP, srcPort)
 	relay, err := f.relayPool.GetOrCreate(ctx, key, func(ctx context.Context) (*socks5.UDPRelay, error) {
 		r, err := client.UDPAssociate(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
 		f.logger.Debug("created new UDP relay",
-			zap.String("key", key),
+			zap.String("key", key.String()),
 			zap.String("local", r.LocalAddr().String()),
 			zap.String("relay_addr", r.RemoteAddr()),
 		)
@@ -81,7 +82,7 @@ func (f *RawUDPForwarder) HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP,
 		// the void until the TTL expires.
 		r.MonitorControlConn(func() {
 			f.logger.Debug("UDP relay control connection closed, evicting relay",
-				zap.String("key", key),
+				zap.String("key", key.String()),
 			)
 			f.relayPool.Remove(key, r)
 		})
@@ -93,11 +94,13 @@ func (f *RawUDPForwarder) HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP,
 
 	target := newSOCKS5Address(dstIP, dstPort)
 
-	f.logger.Debug("sending UDP via SOCKS5",
-		zap.String("src", key),
-		zap.String("dst", target.String()),
-		zap.Int("payload_len", len(payload)),
-	)
+	if f.logger.Core().Enabled(zap.DebugLevel) {
+		f.logger.Debug("sending UDP via SOCKS5",
+			zap.String("src", key.String()),
+			zap.String("dst", target.String()),
+			zap.Int("payload_len", len(payload)),
+		)
+	}
 
 	if err := relay.Send(payload, target); err != nil {
 		return fmt.Errorf("failed to send UDP: %w", err)
@@ -112,7 +115,7 @@ func (f *RawUDPForwarder) HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP,
 // the responder's address. When the reader stops (relay closed or socket
 // error), the association is evicted from the pool so the next packet creates
 // a fresh one.
-func (f *RawUDPForwarder) startRelayReader(key string, relay *socks5.UDPRelay, clientIP net.IP, clientPort uint16, reply stack.UDPReplyFunc) {
+func (f *RawUDPForwarder) startRelayReader(key netip.AddrPort, relay *socks5.UDPRelay, clientIP net.IP, clientPort uint16, reply stack.UDPReplyFunc) {
 	go func() {
 		defer f.relayPool.Remove(key, relay)
 
@@ -124,7 +127,7 @@ func (f *RawUDPForwarder) startRelayReader(key string, relay *socks5.UDPRelay, c
 			n, responder, err := relay.Receive(buf)
 			if err != nil {
 				f.logger.Debug("UDP relay reader stopped",
-					zap.String("key", key),
+					zap.String("key", key.String()),
 					zap.Error(err),
 				)
 				return
@@ -138,7 +141,7 @@ func (f *RawUDPForwarder) startRelayReader(key string, relay *socks5.UDPRelay, c
 			copy(payload, buf[:n])
 
 			f.logger.Debug("received UDP response via SOCKS5",
-				zap.String("key", key),
+				zap.String("key", key.String()),
 				zap.String("responder", responder.String()),
 				zap.Int("len", n),
 			)

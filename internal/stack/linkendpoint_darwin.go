@@ -53,8 +53,11 @@ func (p *darwinPump) start(ctx context.Context) {
 // the intercept dispatcher, so UDP/ICMP interception applies just as it does
 // on the Linux fdbased path.
 func (p *darwinPump) inbound(ctx context.Context) {
-	buf := make([]byte, p.mtu+afHeaderSlack)
 	for {
+		// One allocation per packet, owned by the PacketBuffer: reading into a
+		// reused buffer and then copying would add a second copy, and the
+		// packet outlives this iteration, so reuse is not safe here.
+		buf := make([]byte, p.mtu+afHeaderSlack)
 		n, err := p.dev.Read(buf)
 		if err != nil {
 			if ctx.Err() == nil {
@@ -69,11 +72,8 @@ func (p *darwinPump) inbound(ctx context.Context) {
 		if proto == 0 {
 			continue
 		}
-		// Copy: the packet buffer outlives this iteration's reuse of buf.
-		data := make([]byte, n)
-		copy(data, buf[:n])
 		pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{
-			Payload: buffer.MakeWithData(data),
+			Payload: buffer.MakeWithData(buf[:n]),
 		})
 		p.ch.InjectInbound(proto, pkt)
 		pkt.DecRef()
@@ -81,14 +81,17 @@ func (p *darwinPump) inbound(ctx context.Context) {
 }
 
 // outbound reads packets the stack wants to transmit and writes them to the
-// utun device (which prepends the address-family header).
+// utun device (which prepends the address-family header). The flatten buffer
+// is reused across packets: the device copies it into its own framed write
+// buffer before returning.
 func (p *darwinPump) outbound(ctx context.Context) {
+	var out []byte
 	for {
 		pkt := p.ch.ReadContext(ctx)
 		if pkt == nil {
 			return // context cancelled
 		}
-		var out []byte
+		out = out[:0]
 		for _, v := range pkt.AsSlices() {
 			out = append(out, v...)
 		}

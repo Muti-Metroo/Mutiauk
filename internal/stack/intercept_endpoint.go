@@ -78,11 +78,6 @@ type interceptDispatcher struct {
 
 // DeliverNetworkPacket intercepts incoming packets
 func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtocolNumber, pkt *stack.PacketBuffer) {
-	d.ep.logger.Debug("packet received",
-		zap.Uint32("protocol", uint32(protocol)),
-		zap.Int("size", pkt.Size()),
-	)
-
 	// Handle IPv6 packets
 	if protocol == header.IPv6ProtocolNumber {
 		d.handleIPv6Packet(pkt)
@@ -99,30 +94,51 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 	netHdr := pkt.NetworkHeader()
 
 	if netHdr.View().Size() < header.IPv4MinimumSize {
-		// Network header not yet parsed, parse from data
-		data := pkt.Data().AsRange().ToSlice()
-		if len(data) < header.IPv4MinimumSize {
+		// Network header not yet parsed. Probe only the header prefix:
+		// materializing a caller-owned copy of the whole packet (TCP
+		// included) just to read the protocol byte would put an allocation
+		// on the per-packet hot path. The full copy happens below only for
+		// UDP/ICMP packets we actually intercept.
+		probe := pkt.Data().AsRange().Capped(header.IPv4MinimumSize + header.UDPMinimumSize).ToSlice()
+		if len(probe) < header.IPv4MinimumSize {
 			d.NetworkDispatcher.DeliverNetworkPacket(protocol, pkt)
 			return
 		}
+		probeHdr := header.IPv4(probe)
+		proto := probeHdr.Protocol()
+
+		if proto != uint8(header.UDPProtocolNumber) && proto != uint8(header.ICMPv4ProtocolNumber) {
+			// Not UDP/ICMP, pass to gVisor
+			d.NetworkDispatcher.DeliverNetworkPacket(protocol, pkt)
+			return
+		}
+
+		// Never intercept fragments: non-first fragments carry no UDP/ICMP
+		// header, so their payload bytes would be misread as port numbers,
+		// and a first fragment would be forwarded as if it were the whole
+		// datagram. The intercept path does not reassemble, and gVisor would
+		// reassemble only to drop the datagram (no UDP endpoint is
+		// registered), emitting a misleading ICMP port unreachable - so drop
+		// the fragment here instead. The fragment flags sit in the fixed
+		// header, so the probe prefix is enough for this check.
+		if isFragmentedIPv4(probeHdr) {
+			protoName := "udp"
+			if proto == uint8(header.ICMPv4ProtocolNumber) {
+				protoName = "icmp"
+			}
+			srcAddr := probeHdr.SourceAddress()
+			dstAddr := probeHdr.DestinationAddress()
+			d.ep.logFragmentDrop(protoName, net.IP(srcAddr.AsSlice()), net.IP(dstAddr.AsSlice()))
+			return
+		}
+
+		// Intercepted protocol: now materialize the full packet copy.
+		data := pkt.Data().AsRange().ToSlice()
 		ipHdr := header.IPv4(data)
 		ipHdrLen := int(ipHdr.HeaderLength())
 
 		// Check for UDP
-		if ipHdr.Protocol() == uint8(header.UDPProtocolNumber) {
-			// Never intercept fragments: non-first fragments carry no UDP
-			// header, so their payload bytes would be misread as port
-			// numbers, and a first fragment would be forwarded as if it were
-			// the whole datagram. The intercept path does not reassemble, and
-			// gVisor would reassemble only to drop the datagram (no UDP
-			// endpoint is registered), emitting a misleading ICMP port
-			// unreachable - so drop the fragment here instead.
-			if isFragmentedIPv4(ipHdr) {
-				srcAddr := ipHdr.SourceAddress()
-				dstAddr := ipHdr.DestinationAddress()
-				d.ep.logFragmentDrop("udp", net.IP(srcAddr.AsSlice()), net.IP(dstAddr.AsSlice()))
-				return
-			}
+		if proto == uint8(header.UDPProtocolNumber) {
 			if len(data) >= ipHdrLen+header.UDPMinimumSize {
 				udpHdr := header.UDP(data[ipHdrLen:])
 				payload := data[ipHdrLen+header.UDPMinimumSize:]
@@ -131,13 +147,15 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 				srcIP := net.IP(srcAddr.AsSlice())
 				dstIP := net.IP(dstAddr.AsSlice())
 
-				d.ep.logger.Debug("intercepted UDP packet",
-					zap.String("src", srcIP.String()),
-					zap.Uint16("src_port", udpHdr.SourcePort()),
-					zap.String("dst", dstIP.String()),
-					zap.Uint16("dst_port", udpHdr.DestinationPort()),
-					zap.Int("payload_len", len(payload)),
-				)
+				if d.ep.logger.Core().Enabled(zap.DebugLevel) {
+					d.ep.logger.Debug("intercepted UDP packet",
+						zap.String("src", srcIP.String()),
+						zap.Uint16("src_port", udpHdr.SourcePort()),
+						zap.String("dst", dstIP.String()),
+						zap.Uint16("dst_port", udpHdr.DestinationPort()),
+						zap.Int("payload_len", len(payload)),
+					)
+				}
 
 				if d.ep.udpHandler != nil {
 					d.ep.udpHandler.HandleUDPPacket(srcIP, dstIP, udpHdr.SourcePort(), udpHdr.DestinationPort(), payload)
@@ -147,15 +165,7 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 		}
 
 		// Check for ICMP Echo Request
-		if ipHdr.Protocol() == uint8(header.ICMPv4ProtocolNumber) {
-			// Fragments of an ICMP message must not be interpreted as a
-			// complete echo request; drop them (see the UDP case above).
-			if isFragmentedIPv4(ipHdr) {
-				srcAddr := ipHdr.SourceAddress()
-				dstAddr := ipHdr.DestinationAddress()
-				d.ep.logFragmentDrop("icmp", net.IP(srcAddr.AsSlice()), net.IP(dstAddr.AsSlice()))
-				return
-			}
+		if proto == uint8(header.ICMPv4ProtocolNumber) {
 			if len(data) >= ipHdrLen+header.ICMPv4MinimumSize {
 				icmpHdr := header.ICMPv4(data[ipHdrLen:])
 				// Only handle Echo Request (Type 8)
@@ -168,13 +178,15 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 					seq := icmpHdr.Sequence()
 					payload := data[ipHdrLen+header.ICMPv4MinimumSize:]
 
-					d.ep.logger.Debug("intercepted ICMP Echo Request",
-						zap.String("src", srcIP.String()),
-						zap.String("dst", dstIP.String()),
-						zap.Uint16("id", id),
-						zap.Uint16("seq", seq),
-						zap.Int("payload_len", len(payload)),
-					)
+					if d.ep.logger.Core().Enabled(zap.DebugLevel) {
+						d.ep.logger.Debug("intercepted ICMP Echo Request",
+							zap.String("src", srcIP.String()),
+							zap.String("dst", dstIP.String()),
+							zap.Uint16("id", id),
+							zap.Uint16("seq", seq),
+							zap.Int("payload_len", len(payload)),
+						)
+					}
 
 					if d.ep.icmpHandler != nil {
 						d.ep.icmpHandler.HandleICMPPacket(srcIP, dstIP, id, seq, payload)
@@ -184,7 +196,7 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 			}
 		}
 
-		// Not UDP/ICMP or malformed, pass to gVisor
+		// Malformed or non-echo ICMP, pass to gVisor
 		d.NetworkDispatcher.DeliverNetworkPacket(protocol, pkt)
 		return
 	}
@@ -216,13 +228,15 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 		// Get payload
 		payload := pkt.Data().AsRange().ToSlice()
 
-		d.ep.logger.Info("intercepted UDP packet",
-			zap.String("src", srcIP.String()),
-			zap.Uint16("src_port", srcPort),
-			zap.String("dst", dstIP.String()),
-			zap.Uint16("dst_port", dstPort),
-			zap.Int("payload_len", len(payload)),
-		)
+		if d.ep.logger.Core().Enabled(zap.DebugLevel) {
+			d.ep.logger.Debug("intercepted UDP packet",
+				zap.String("src", srcIP.String()),
+				zap.Uint16("src_port", srcPort),
+				zap.String("dst", dstIP.String()),
+				zap.Uint16("dst_port", dstPort),
+				zap.Int("payload_len", len(payload)),
+			)
+		}
 
 		// Call the UDP handler if set
 		if d.ep.udpHandler != nil {
@@ -252,13 +266,15 @@ func (d *interceptDispatcher) DeliverNetworkPacket(protocol tcpip.NetworkProtoco
 			seq := icmpHdr.Sequence()
 			payload := pkt.Data().AsRange().ToSlice()
 
-			d.ep.logger.Info("intercepted ICMP Echo Request",
-				zap.String("src", srcIP.String()),
-				zap.String("dst", dstIP.String()),
-				zap.Uint16("id", id),
-				zap.Uint16("seq", seq),
-				zap.Int("payload_len", len(payload)),
-			)
+			if d.ep.logger.Core().Enabled(zap.DebugLevel) {
+				d.ep.logger.Debug("intercepted ICMP Echo Request",
+					zap.String("src", srcIP.String()),
+					zap.String("dst", dstIP.String()),
+					zap.Uint16("id", id),
+					zap.Uint16("seq", seq),
+					zap.Int("payload_len", len(payload)),
+				)
+			}
 
 			if d.ep.icmpHandler != nil {
 				d.ep.icmpHandler.HandleICMPPacket(srcIP, dstIP, id, seq, payload)
@@ -437,16 +453,29 @@ func (d *interceptDispatcher) handleIPv6Packet(pkt *stack.PacketBuffer) {
 	netHdr := pkt.NetworkHeader()
 
 	if netHdr.View().Size() < header.IPv6MinimumSize {
-		// Network header not yet parsed, parse from data
-		data := pkt.Data().AsRange().ToSlice()
-		if len(data) < header.IPv6MinimumSize {
+		// Network header not yet parsed. Probe only the fixed header prefix
+		// (see the IPv4 path); the full copy is materialized below only for
+		// UDP/ICMPv6 packets we actually intercept.
+		probe := pkt.Data().AsRange().Capped(header.IPv6MinimumSize + header.UDPMinimumSize).ToSlice()
+		if len(probe) < header.IPv6MinimumSize {
 			d.NetworkDispatcher.DeliverNetworkPacket(header.IPv6ProtocolNumber, pkt)
 			return
 		}
+		probeHdr := header.IPv6(probe)
+		proto := probeHdr.NextHeader()
+
+		if proto != uint8(header.UDPProtocolNumber) && proto != uint8(header.ICMPv6ProtocolNumber) {
+			// Not UDP/ICMPv6, pass to gVisor
+			d.NetworkDispatcher.DeliverNetworkPacket(header.IPv6ProtocolNumber, pkt)
+			return
+		}
+
+		// Intercepted protocol: now materialize the full packet copy.
+		data := pkt.Data().AsRange().ToSlice()
 		ipHdr := header.IPv6(data)
 
 		// Check for UDP
-		if ipHdr.NextHeader() == uint8(header.UDPProtocolNumber) {
+		if proto == uint8(header.UDPProtocolNumber) {
 			ipHdrLen := header.IPv6MinimumSize
 			if len(data) >= ipHdrLen+header.UDPMinimumSize {
 				udpHdr := header.UDP(data[ipHdrLen:])
@@ -456,13 +485,15 @@ func (d *interceptDispatcher) handleIPv6Packet(pkt *stack.PacketBuffer) {
 				srcIP := net.IP(srcAddr.AsSlice())
 				dstIP := net.IP(dstAddr.AsSlice())
 
-				d.ep.logger.Debug("intercepted IPv6 UDP packet",
-					zap.String("src", srcIP.String()),
-					zap.Uint16("src_port", udpHdr.SourcePort()),
-					zap.String("dst", dstIP.String()),
-					zap.Uint16("dst_port", udpHdr.DestinationPort()),
-					zap.Int("payload_len", len(payload)),
-				)
+				if d.ep.logger.Core().Enabled(zap.DebugLevel) {
+					d.ep.logger.Debug("intercepted IPv6 UDP packet",
+						zap.String("src", srcIP.String()),
+						zap.Uint16("src_port", udpHdr.SourcePort()),
+						zap.String("dst", dstIP.String()),
+						zap.Uint16("dst_port", udpHdr.DestinationPort()),
+						zap.Int("payload_len", len(payload)),
+					)
+				}
 
 				if d.ep.udpHandler != nil {
 					d.ep.udpHandler.HandleUDPPacket(srcIP, dstIP, udpHdr.SourcePort(), udpHdr.DestinationPort(), payload)
@@ -472,7 +503,7 @@ func (d *interceptDispatcher) handleIPv6Packet(pkt *stack.PacketBuffer) {
 		}
 
 		// Check for ICMPv6 Echo Request
-		if ipHdr.NextHeader() == uint8(header.ICMPv6ProtocolNumber) {
+		if proto == uint8(header.ICMPv6ProtocolNumber) {
 			ipHdrLen := header.IPv6MinimumSize
 			if len(data) >= ipHdrLen+header.ICMPv6MinimumSize {
 				icmpHdr := header.ICMPv6(data[ipHdrLen:])
@@ -487,13 +518,15 @@ func (d *interceptDispatcher) handleIPv6Packet(pkt *stack.PacketBuffer) {
 					seq := uint16(data[ipHdrLen+6])<<8 | uint16(data[ipHdrLen+7])
 					payload := data[ipHdrLen+header.ICMPv6EchoMinimumSize:]
 
-					d.ep.logger.Debug("intercepted ICMPv6 Echo Request",
-						zap.String("src", srcIP.String()),
-						zap.String("dst", dstIP.String()),
-						zap.Uint16("id", id),
-						zap.Uint16("seq", seq),
-						zap.Int("payload_len", len(payload)),
-					)
+					if d.ep.logger.Core().Enabled(zap.DebugLevel) {
+						d.ep.logger.Debug("intercepted ICMPv6 Echo Request",
+							zap.String("src", srcIP.String()),
+							zap.String("dst", dstIP.String()),
+							zap.Uint16("id", id),
+							zap.Uint16("seq", seq),
+							zap.Int("payload_len", len(payload)),
+						)
+					}
 
 					if d.ep.icmpHandler != nil {
 						d.ep.icmpHandler.HandleICMPPacket(srcIP, dstIP, id, seq, payload)
@@ -503,7 +536,7 @@ func (d *interceptDispatcher) handleIPv6Packet(pkt *stack.PacketBuffer) {
 			}
 		}
 
-		// Not UDP/ICMPv6 or malformed, pass to gVisor
+		// Malformed or non-echo ICMPv6, pass to gVisor
 		d.NetworkDispatcher.DeliverNetworkPacket(header.IPv6ProtocolNumber, pkt)
 		return
 	}
@@ -530,13 +563,15 @@ func (d *interceptDispatcher) handleIPv6Packet(pkt *stack.PacketBuffer) {
 		// Get payload
 		payload := pkt.Data().AsRange().ToSlice()
 
-		d.ep.logger.Info("intercepted IPv6 UDP packet",
-			zap.String("src", srcIP.String()),
-			zap.Uint16("src_port", srcPort),
-			zap.String("dst", dstIP.String()),
-			zap.Uint16("dst_port", dstPort),
-			zap.Int("payload_len", len(payload)),
-		)
+		if d.ep.logger.Core().Enabled(zap.DebugLevel) {
+			d.ep.logger.Debug("intercepted IPv6 UDP packet",
+				zap.String("src", srcIP.String()),
+				zap.Uint16("src_port", srcPort),
+				zap.String("dst", dstIP.String()),
+				zap.Uint16("dst_port", dstPort),
+				zap.Int("payload_len", len(payload)),
+			)
+		}
 
 		// Call the UDP handler if set
 		if d.ep.udpHandler != nil {
@@ -563,13 +598,15 @@ func (d *interceptDispatcher) handleIPv6Packet(pkt *stack.PacketBuffer) {
 			seq := uint16(icmpData[6])<<8 | uint16(icmpData[7])
 			payload := pkt.Data().AsRange().ToSlice()
 
-			d.ep.logger.Info("intercepted ICMPv6 Echo Request",
-				zap.String("src", srcIP.String()),
-				zap.String("dst", dstIP.String()),
-				zap.Uint16("id", id),
-				zap.Uint16("seq", seq),
-				zap.Int("payload_len", len(payload)),
-			)
+			if d.ep.logger.Core().Enabled(zap.DebugLevel) {
+				d.ep.logger.Debug("intercepted ICMPv6 Echo Request",
+					zap.String("src", srcIP.String()),
+					zap.String("dst", dstIP.String()),
+					zap.Uint16("id", id),
+					zap.Uint16("seq", seq),
+					zap.Int("payload_len", len(payload)),
+				)
+			}
 
 			if d.ep.icmpHandler != nil {
 				d.ep.icmpHandler.HandleICMPPacket(srcIP, dstIP, id, seq, payload)

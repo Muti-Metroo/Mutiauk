@@ -521,22 +521,23 @@ func TestRelayPool_Remove(t *testing.T) {
 		return nil, nil
 	}
 
-	_, _ = pool.GetOrCreate(ctx, "key", createFunc)
+	key := testPoolKey("key")
+	_, _ = pool.GetOrCreate(ctx, key, createFunc)
 
 	// Removing with a non-matching relay instance must be a no-op.
-	pool.Remove("key", &socks5.UDPRelay{})
+	pool.Remove(key, &socks5.UDPRelay{})
 	pool.mu.Lock()
-	_, exists := pool.entries["key"]
+	_, exists := pool.entries[key]
 	pool.mu.Unlock()
 	if !exists {
 		t.Error("entry must survive Remove with a different relay instance")
 	}
 
 	// Removing with the pooled instance evicts it.
-	relay, _ := pool.GetOrCreate(ctx, "key", createFunc)
-	pool.Remove("key", relay)
+	relay, _ := pool.GetOrCreate(ctx, key, createFunc)
+	pool.Remove(key, relay)
 	pool.mu.Lock()
-	_, exists = pool.entries["key"]
+	_, exists = pool.entries[key]
 	pool.mu.Unlock()
 	if exists {
 		t.Error("entry should be evicted by Remove with the pooled relay")

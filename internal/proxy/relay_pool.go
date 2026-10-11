@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 // RelayPool manages a pool of UDP relay sessions with TTL-based cleanup.
 type RelayPool struct {
 	mu       sync.Mutex
-	entries  map[string]*relayEntry
+	entries  map[netip.AddrPort]*relayEntry
 	ttl      time.Duration
 	logger   *zap.Logger
 	stopOnce sync.Once
@@ -28,7 +29,7 @@ type relayEntry struct {
 // NewRelayPool creates a new relay pool with the given TTL.
 func NewRelayPool(ttl time.Duration, logger *zap.Logger) *RelayPool {
 	p := &RelayPool{
-		entries: make(map[string]*relayEntry),
+		entries: make(map[netip.AddrPort]*relayEntry),
 		ttl:     ttl,
 		logger:  logger,
 		stopCh:  make(chan struct{}),
@@ -40,7 +41,7 @@ func NewRelayPool(ttl time.Duration, logger *zap.Logger) *RelayPool {
 // GetOrCreate returns an existing relay for the key, or creates a new one.
 // The create callback runs outside the lock to avoid blocking other requests
 // during potentially slow network I/O (SOCKS5 UDP ASSOCIATE handshake).
-func (p *RelayPool) GetOrCreate(ctx context.Context, key string, create func(context.Context) (*socks5.UDPRelay, error)) (*socks5.UDPRelay, error) {
+func (p *RelayPool) GetOrCreate(ctx context.Context, key netip.AddrPort, create func(context.Context) (*socks5.UDPRelay, error)) (*socks5.UDPRelay, error) {
 	// Fast path: check if relay already exists
 	p.mu.Lock()
 	if entry, ok := p.entries[key]; ok {
@@ -79,7 +80,7 @@ func (p *RelayPool) GetOrCreate(ctx context.Context, key string, create func(con
 
 // Remove evicts the relay for key and closes it, but only if the pooled
 // relay is the same instance - a newer relay may already have replaced it.
-func (p *RelayPool) Remove(key string, relay *socks5.UDPRelay) {
+func (p *RelayPool) Remove(key netip.AddrPort, relay *socks5.UDPRelay) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -92,7 +93,7 @@ func (p *RelayPool) Remove(key string, relay *socks5.UDPRelay) {
 	}
 	delete(p.entries, key)
 	if p.logger != nil {
-		p.logger.Debug("removed UDP relay", zap.String("key", key))
+		p.logger.Debug("removed UDP relay", zap.String("key", key.String()))
 	}
 }
 
@@ -106,7 +107,7 @@ func (p *RelayPool) Clear() {
 			entry.relay.Close()
 		}
 	}
-	p.entries = make(map[string]*relayEntry)
+	p.entries = make(map[netip.AddrPort]*relayEntry)
 }
 
 // Close stops the cleanup goroutine and clears all relays.
@@ -145,7 +146,7 @@ func (p *RelayPool) cleanup() {
 			}
 			delete(p.entries, key)
 			if p.logger != nil {
-				p.logger.Debug("cleaned up stale UDP relay", zap.String("key", key))
+				p.logger.Debug("cleaned up stale UDP relay", zap.String("key", key.String()))
 			}
 		}
 	}

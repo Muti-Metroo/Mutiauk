@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/netip"
 	"sync"
 
 	"github.com/postalsys/mutiauk/internal/nat"
@@ -55,7 +54,7 @@ func (f *TCPForwarder) PreConnect(ctx context.Context, srcAddr, dstAddr net.Addr
 		return nil, err
 	}
 
-	f.pendingConns.Store(connKey(srcAddr, dstAddr), proxyConn)
+	f.pendingConns.Store(newConnKey(srcAddr, dstAddr), proxyConn)
 
 	f.logger.Debug("SOCKS5 pre-connect succeeded",
 		zap.String("src", srcAddr.String()),
@@ -68,7 +67,7 @@ func (f *TCPForwarder) PreConnect(ctx context.Context, srcAddr, dstAddr net.Addr
 // CleanupPending removes and closes a pending pre-established connection.
 // Called when CreateEndpoint fails after a successful PreConnect.
 func (f *TCPForwarder) CleanupPending(srcAddr, dstAddr net.Addr) {
-	key := connKey(srcAddr, dstAddr)
+	key := newConnKey(srcAddr, dstAddr)
 	if pending, ok := f.pendingConns.LoadAndDelete(key); ok {
 		pending.(net.Conn).Close()
 	}
@@ -80,10 +79,10 @@ func (f *TCPForwarder) HandleTCP(ctx context.Context, conn net.Conn, srcAddr, ds
 
 	srcTCP := srcAddr.(*net.TCPAddr)
 	dstTCP := dstAddr.(*net.TCPAddr)
-	srcAddrPort := netip.MustParseAddrPort(srcTCP.String())
-	dstAddrPort := netip.MustParseAddrPort(dstTCP.String())
+	srcAddrPort := addrPort(srcTCP)
+	dstAddrPort := addrPort(dstTCP)
 
-	key := connKey(srcAddr, dstAddr)
+	key := newConnKey(srcAddr, dstAddr)
 	var proxyConn net.Conn
 
 	if pending, ok := f.pendingConns.LoadAndDelete(key); ok {

@@ -287,11 +287,13 @@ func (s *Stack) Run(ctx context.Context) error {
 // Response datagrams arrive asynchronously on the relay association and are
 // delivered back to the client through writeUDPResponse.
 func (s *Stack) HandleUDPPacket(srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte) {
-	s.logger.Debug("UDP packet received for forwarding",
-		zap.String("src", fmt.Sprintf("%s:%d", srcIP, srcPort)),
-		zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
-		zap.Int("payload_len", len(payload)),
-	)
+	if s.logger.Core().Enabled(zap.DebugLevel) {
+		s.logger.Debug("UDP packet received for forwarding",
+			zap.String("src", fmt.Sprintf("%s:%d", srcIP, srcPort)),
+			zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
+			zap.Int("payload_len", len(payload)),
+		)
+	}
 
 	if s.cfg.RawUDPHandler == nil {
 		s.logger.Debug("no RawUDPHandler configured, dropping UDP packet")
@@ -302,9 +304,11 @@ func (s *Stack) HandleUDPPacket(srcIP, dstIP net.IP, srcPort, dstPort uint16, pa
 	select {
 	case s.udpSem <- struct{}{}:
 	default:
-		s.logger.Debug("UDP semaphore full, dropping packet",
-			zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
-		)
+		if s.logger.Core().Enabled(zap.DebugLevel) {
+			s.logger.Debug("UDP semaphore full, dropping packet",
+				zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
+			)
+		}
 		return
 	}
 
@@ -319,10 +323,12 @@ func (s *Stack) HandleUDPPacket(srcIP, dstIP net.IP, srcPort, dstPort uint16, pa
 		defer cancel()
 
 		if err := s.cfg.RawUDPHandler.HandleRawUDP(ctx, srcIP, dstIP, srcPort, dstPort, payload, s.writeUDPResponse); err != nil {
-			s.logger.Debug("UDP forward failed",
-				zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
-				zap.Error(err),
-			)
+			if s.logger.Core().Enabled(zap.DebugLevel) {
+				s.logger.Debug("UDP forward failed",
+					zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
+					zap.Error(err),
+				)
+			}
 		}
 	}()
 }
@@ -404,13 +410,15 @@ func clampUDPPayload(payload []byte, mtu int, v6 bool) ([]byte, bool) {
 
 // HandleICMPPacket implements ICMPPacketHandler for the intercept endpoint
 func (s *Stack) HandleICMPPacket(srcIP, dstIP net.IP, id, seq uint16, payload []byte) {
-	s.logger.Debug("ICMP packet received for forwarding",
-		zap.String("src", srcIP.String()),
-		zap.String("dst", dstIP.String()),
-		zap.Uint16("id", id),
-		zap.Uint16("seq", seq),
-		zap.Int("payload_len", len(payload)),
-	)
+	if s.logger.Core().Enabled(zap.DebugLevel) {
+		s.logger.Debug("ICMP packet received for forwarding",
+			zap.String("src", srcIP.String()),
+			zap.String("dst", dstIP.String()),
+			zap.Uint16("id", id),
+			zap.Uint16("seq", seq),
+			zap.Int("payload_len", len(payload)),
+		)
+	}
 
 	if s.cfg.ICMPHandler == nil {
 		s.logger.Debug("no ICMPHandler configured, dropping ICMP packet")
@@ -421,9 +429,11 @@ func (s *Stack) HandleICMPPacket(srcIP, dstIP net.IP, id, seq uint16, payload []
 	select {
 	case s.icmpSem <- struct{}{}:
 	default:
-		s.logger.Debug("ICMP semaphore full, dropping packet",
-			zap.String("dst", dstIP.String()),
-		)
+		if s.logger.Core().Enabled(zap.DebugLevel) {
+			s.logger.Debug("ICMP semaphore full, dropping packet",
+				zap.String("dst", dstIP.String()),
+			)
+		}
 		return
 	}
 
@@ -437,10 +447,12 @@ func (s *Stack) HandleICMPPacket(srcIP, dstIP net.IP, id, seq uint16, payload []
 
 		response, err := s.cfg.ICMPHandler.HandleICMP(ctx, srcIP, dstIP, id, seq, payload)
 		if err != nil {
-			s.logger.Debug("ICMP forward failed",
-				zap.String("dst", dstIP.String()),
-				zap.Error(err),
-			)
+			if s.logger.Core().Enabled(zap.DebugLevel) {
+				s.logger.Debug("ICMP forward failed",
+					zap.String("dst", dstIP.String()),
+					zap.Error(err),
+				)
+			}
 			// If forwarding setup failed (vs. the destination simply not
 			// answering), reply to the local sender with an ICMP Destination
 			// Unreachable so it fails fast instead of timing out.
@@ -448,7 +460,7 @@ func (s *Stack) HandleICMPPacket(srcIP, dstIP net.IP, id, seq uint16, payload []
 				if errPkt := buildICMPUnreachableForError(srcIP, dstIP, id, seq, payload, err); errPkt != nil {
 					if _, werr := s.tunDev.Write(errPkt); werr != nil {
 						s.logger.Debug("failed to write ICMP unreachable to TUN", zap.Error(werr))
-					} else {
+					} else if s.logger.Core().Enabled(zap.DebugLevel) {
 						s.logger.Debug("ICMP unreachable written to TUN",
 							zap.String("dst", dstIP.String()))
 					}

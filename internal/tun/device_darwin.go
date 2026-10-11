@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 
 	"golang.org/x/sys/unix"
 )
@@ -37,6 +38,13 @@ type darwinDevice struct {
 	// rbuf backs Read. Read is single-reader (driven by the link pump), so a
 	// shared buffer is safe and avoids a per-packet allocation.
 	rbuf []byte
+
+	// wmu and wbuf back Write: the framed packet (AF header + IP packet) is
+	// assembled in a reusable buffer instead of allocating per packet. Write
+	// is called from several goroutines (the outbound pump, UDP/ICMP reply
+	// paths), so the buffer is mutex-guarded.
+	wmu  sync.Mutex
+	wbuf []byte
 }
 
 // New creates a new utun device on macOS.
@@ -181,11 +189,16 @@ func (d *darwinDevice) Write(p []byte) (int, error) {
 		af = uint32(unix.AF_INET6)
 	}
 
-	out := make([]byte, afHeaderLen+len(p))
+	d.wmu.Lock()
+	if cap(d.wbuf) < afHeaderLen+len(p) {
+		d.wbuf = make([]byte, afHeaderLen+len(p))
+	}
+	out := d.wbuf[:afHeaderLen+len(p)]
 	binary.BigEndian.PutUint32(out[:afHeaderLen], af)
 	copy(out[afHeaderLen:], p)
 
 	n, err := d.file.Write(out)
+	d.wmu.Unlock()
 	if err != nil {
 		return 0, err
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"sync"
 
 	"github.com/postalsys/mutiauk/internal/socks5"
@@ -17,14 +18,37 @@ const (
 	DefaultUDPBufferSize = 65535
 )
 
-// connKey builds a map key from source and destination addresses.
-func connKey(src, dst net.Addr) string {
-	return fmt.Sprintf("%s->%s", src.String(), dst.String())
+// connKey identifies a forwarded connection by its endpoints. netip.AddrPort
+// keys are comparable and alloc-free, unlike the previous Sprintf strings.
+type connKey struct {
+	src netip.AddrPort
+	dst netip.AddrPort
 }
 
-// addrKey builds a map key from IP and port.
-func addrKey(ip net.IP, port uint16) string {
-	return fmt.Sprintf("%s:%d", ip, port)
+// addrPort converts a TCP address to a netip.AddrPort without a string
+// round-trip. A nil or unparsable IP yields the zero AddrPort.
+func addrPort(a *net.TCPAddr) netip.AddrPort {
+	addr, _ := netip.AddrFromSlice(a.IP)
+	return netip.AddrPortFrom(addr.Unmap(), uint16(a.Port))
+}
+
+// addrPortFromIP converts an IP/port pair to a netip.AddrPort without a
+// string round-trip.
+func addrPortFromIP(ip net.IP, port uint16) netip.AddrPort {
+	addr, _ := netip.AddrFromSlice(ip)
+	return netip.AddrPortFrom(addr.Unmap(), uint16(port))
+}
+
+// connKey builds a map key from source and destination addresses.
+func newConnKey(src, dst net.Addr) connKey {
+	var k connKey
+	if t, ok := src.(*net.TCPAddr); ok {
+		k.src = addrPort(t)
+	}
+	if t, ok := dst.(*net.TCPAddr); ok {
+		k.dst = addrPort(t)
+	}
+	return k
 }
 
 // newSOCKS5Address creates a SOCKS5 Address from IP and port.

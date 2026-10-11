@@ -143,5 +143,6 @@ func (m *Manager) Sync(desired []Route) error {
 	if err != nil {
 		return err
 	}
-	return m.Apply(plan)
+	_, err = m.Apply(plan)
+	return err
 }

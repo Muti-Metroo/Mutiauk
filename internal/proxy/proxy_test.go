@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -359,6 +360,15 @@ func TestRawUDPForwarder_Close_Multiple(t *testing.T) {
 
 // --- RelayPool Tests ---
 
+// testPoolKey maps a name to a distinct AddrPort for relay-pool tests.
+func testPoolKey(s string) netip.AddrPort {
+	var h uint16
+	for i := 0; i < len(s); i++ {
+		h = h*31 + uint16(s[i])
+	}
+	return netip.AddrPortFrom(netip.MustParseAddr("10.0.0.1"), h)
+}
+
 func TestRelayPool_GetOrCreate(t *testing.T) {
 	logger := zap.NewNop()
 	pool := NewRelayPool(time.Minute, logger)
@@ -373,19 +383,19 @@ func TestRelayPool_GetOrCreate(t *testing.T) {
 	ctx := context.Background()
 
 	// First call should create
-	_, _ = pool.GetOrCreate(ctx, "test-key", createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("test-key"), createFunc)
 	if callCount != 1 {
 		t.Errorf("expected createFunc to be called once, got %d", callCount)
 	}
 
 	// Second call should reuse
-	_, _ = pool.GetOrCreate(ctx, "test-key", createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("test-key"), createFunc)
 	if callCount != 1 {
 		t.Errorf("expected createFunc to not be called again, got %d calls", callCount)
 	}
 
 	// Different key should create new
-	_, _ = pool.GetOrCreate(ctx, "other-key", createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("other-key"), createFunc)
 	if callCount != 2 {
 		t.Errorf("expected createFunc to be called for new key, got %d calls", callCount)
 	}
@@ -404,8 +414,8 @@ func TestRelayPool_Clear(t *testing.T) {
 		return nil, nil
 	}
 
-	_, _ = pool.GetOrCreate(ctx, "key1", createFunc)
-	_, _ = pool.GetOrCreate(ctx, "key2", createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("key1"), createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("key2"), createFunc)
 
 	if callCount != 2 {
 		t.Errorf("expected 2 creates, got %d", callCount)
@@ -415,7 +425,7 @@ func TestRelayPool_Clear(t *testing.T) {
 	pool.Clear()
 
 	// Next access should create new entries
-	_, _ = pool.GetOrCreate(ctx, "key1", createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("key1"), createFunc)
 	if callCount != 3 {
 		t.Errorf("expected new create after clear, got %d", callCount)
 	}
@@ -564,27 +574,36 @@ func TestRawUDPForwarder_RelayTTL(t *testing.T) {
 
 // --- Common Helper Tests ---
 
-func TestConnKey(t *testing.T) {
+func TestNewConnKey(t *testing.T) {
 	srcAddr := &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 12345}
 	dstAddr := &net.TCPAddr{IP: net.ParseIP("10.0.0.1"), Port: 80}
 
-	key := connKey(srcAddr, dstAddr)
-	expected := "192.168.1.1:12345->10.0.0.1:80"
+	key := newConnKey(srcAddr, dstAddr)
 
-	if key != expected {
-		t.Errorf("connKey = %q, want %q", key, expected)
+	if key.src != netip.MustParseAddrPort("192.168.1.1:12345") {
+		t.Errorf("key.src = %q, want 192.168.1.1:12345", key.src)
+	}
+	if key.dst != netip.MustParseAddrPort("10.0.0.1:80") {
+		t.Errorf("key.dst = %q, want 10.0.0.1:80", key.dst)
+	}
+
+	// Distinct connections must produce distinct keys.
+	other := newConnKey(srcAddr, &net.TCPAddr{IP: net.ParseIP("10.0.0.1"), Port: 443})
+	if key == other {
+		t.Error("newConnKey produced identical keys for different destinations")
 	}
 }
 
-func TestAddrKey(t *testing.T) {
-	ip := net.ParseIP("192.168.1.1")
-	port := uint16(12345)
-
-	key := addrKey(ip, port)
-	expected := "192.168.1.1:12345"
-
-	if key != expected {
-		t.Errorf("addrKey = %q, want %q", key, expected)
+func TestAddrPortFromIP(t *testing.T) {
+	if got := addrPortFromIP(net.ParseIP("192.168.1.1"), 12345); got != netip.MustParseAddrPort("192.168.1.1:12345") {
+		t.Errorf("addrPortFromIP(IPv4) = %q, want 192.168.1.1:12345", got)
+	}
+	// IPv4-mapped IPv6 forms normalize to the same key as plain IPv4.
+	if got := addrPortFromIP(net.ParseIP("::ffff:192.168.1.1"), 12345); got != netip.MustParseAddrPort("192.168.1.1:12345") {
+		t.Errorf("addrPortFromIP(mapped) = %q, want 192.168.1.1:12345", got)
+	}
+	if got := addrPortFromIP(net.ParseIP("2001:db8::1"), 443); got != netip.MustParseAddrPort("[2001:db8::1]:443") {
+		t.Errorf("addrPortFromIP(IPv6) = %q, want [2001:db8::1]:443", got)
 	}
 }
 
@@ -694,7 +713,7 @@ func TestRelayPool_GetOrCreate_Error(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	relay, err := pool.GetOrCreate(ctx, "error-key", createFunc)
+	relay, err := pool.GetOrCreate(ctx, testPoolKey("error-key"), createFunc)
 
 	if err != expectedErr {
 		t.Errorf("expected error %v, got %v", expectedErr, err)
@@ -705,7 +724,7 @@ func TestRelayPool_GetOrCreate_Error(t *testing.T) {
 
 	// Verify entry was not stored
 	pool.mu.Lock()
-	_, exists := pool.entries["error-key"]
+	_, exists := pool.entries[testPoolKey("error-key")]
 	pool.mu.Unlock()
 	if exists {
 		t.Error("entry should not be stored on creation error")
@@ -735,7 +754,7 @@ func TestRelayPool_GetOrCreate_Concurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = pool.GetOrCreate(ctx, "shared-key", createFunc)
+			_, _ = pool.GetOrCreate(ctx, testPoolKey("shared-key"), createFunc)
 		}()
 	}
 	wg.Wait()
@@ -769,20 +788,20 @@ func TestRelayPool_GetOrCreate_UpdatesLastUsed(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, _ = pool.GetOrCreate(ctx, "test-key", createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("test-key"), createFunc)
 
 	// Get initial lastUsed time
 	pool.mu.Lock()
-	initialTime := pool.entries["test-key"].lastUsed
+	initialTime := pool.entries[testPoolKey("test-key")].lastUsed
 	pool.mu.Unlock()
 
 	// Wait a bit and access again
 	time.Sleep(10 * time.Millisecond)
-	_, _ = pool.GetOrCreate(ctx, "test-key", createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("test-key"), createFunc)
 
 	// Verify lastUsed was updated
 	pool.mu.Lock()
-	updatedTime := pool.entries["test-key"].lastUsed
+	updatedTime := pool.entries[testPoolKey("test-key")].lastUsed
 	pool.mu.Unlock()
 
 	if !updatedTime.After(initialTime) {
@@ -801,11 +820,11 @@ func TestRelayPool_Cleanup(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, _ = pool.GetOrCreate(ctx, "expire-key", createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("expire-key"), createFunc)
 
 	// Verify entry exists
 	pool.mu.Lock()
-	_, exists := pool.entries["expire-key"]
+	_, exists := pool.entries[testPoolKey("expire-key")]
 	pool.mu.Unlock()
 	if !exists {
 		t.Fatal("entry should exist initially")
@@ -819,7 +838,7 @@ func TestRelayPool_Cleanup(t *testing.T) {
 
 	// Verify entry was removed
 	pool.mu.Lock()
-	_, exists = pool.entries["expire-key"]
+	_, exists = pool.entries[testPoolKey("expire-key")]
 	pool.mu.Unlock()
 	if exists {
 		t.Error("expired entry should be removed after cleanup")
@@ -836,14 +855,14 @@ func TestRelayPool_Cleanup_KeepsRecent(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, _ = pool.GetOrCreate(ctx, "recent-key", createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("recent-key"), createFunc)
 
 	// Trigger cleanup
 	pool.cleanup()
 
 	// Verify entry still exists (TTL not expired)
 	pool.mu.Lock()
-	_, exists := pool.entries["recent-key"]
+	_, exists := pool.entries[testPoolKey("recent-key")]
 	pool.mu.Unlock()
 	if !exists {
 		t.Error("recent entry should not be removed")
@@ -886,7 +905,7 @@ func TestRelayPool_NilLogger(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, _ = pool.GetOrCreate(ctx, "test-key", createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("test-key"), createFunc)
 
 	// Wait for TTL to expire
 	time.Sleep(20 * time.Millisecond)
@@ -897,27 +916,17 @@ func TestRelayPool_NilLogger(t *testing.T) {
 
 // --- Additional Common Helper Tests ---
 
-func TestConnKey_IPv6(t *testing.T) {
+func TestNewConnKey_IPv6(t *testing.T) {
 	srcAddr := &net.TCPAddr{IP: net.ParseIP("2001:db8::1"), Port: 12345}
 	dstAddr := &net.TCPAddr{IP: net.ParseIP("2001:db8::2"), Port: 443}
 
-	key := connKey(srcAddr, dstAddr)
-	expected := "[2001:db8::1]:12345->[2001:db8::2]:443"
+	key := newConnKey(srcAddr, dstAddr)
 
-	if key != expected {
-		t.Errorf("connKey = %q, want %q", key, expected)
+	if key.src != netip.MustParseAddrPort("[2001:db8::1]:12345") {
+		t.Errorf("key.src = %q, want [2001:db8::1]:12345", key.src)
 	}
-}
-
-func TestAddrKey_IPv6(t *testing.T) {
-	ip := net.ParseIP("2001:db8::1")
-	port := uint16(443)
-
-	key := addrKey(ip, port)
-	expected := "2001:db8::1:443"
-
-	if key != expected {
-		t.Errorf("addrKey = %q, want %q", key, expected)
+	if key.dst != netip.MustParseAddrPort("[2001:db8::2]:443") {
+		t.Errorf("key.dst = %q, want [2001:db8::2]:443", key.dst)
 	}
 }
 
@@ -955,17 +964,17 @@ func BenchmarkConnKey(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = connKey(srcAddr, dstAddr)
+		_ = newConnKey(srcAddr, dstAddr)
 	}
 }
 
-func BenchmarkAddrKey(b *testing.B) {
+func BenchmarkAddrPortFromIP(b *testing.B) {
 	ip := net.ParseIP("192.168.1.1")
 	port := uint16(12345)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = addrKey(ip, port)
+		_ = addrPortFromIP(ip, port)
 	}
 }
 
@@ -990,11 +999,11 @@ func BenchmarkRelayPool_GetOrCreate(b *testing.B) {
 
 	ctx := context.Background()
 	// Pre-create the entry
-	_, _ = pool.GetOrCreate(ctx, "bench-key", createFunc)
+	_, _ = pool.GetOrCreate(ctx, testPoolKey("bench-key"), createFunc)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = pool.GetOrCreate(ctx, "bench-key", createFunc)
+		_, _ = pool.GetOrCreate(ctx, testPoolKey("bench-key"), createFunc)
 	}
 }
 

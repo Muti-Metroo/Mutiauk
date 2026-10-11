@@ -65,14 +65,24 @@ func (k *KernelRoutes) TUNName() string {
 // Add adds a route to the kernel routing table. Returns true if the route was
 // added, false if it already existed (idempotent).
 func (k *KernelRoutes) Add(r Route) (added bool, err error) {
+	return k.add(r, true)
+}
+
+// add adds a route to the kernel routing table. When checkExists is false the
+// pre-add existence lookup (a full RIB dump) is skipped: the caller's diff
+// already established the route is absent, and `route add` reporting
+// "File exists" is treated as "already existed".
+func (k *KernelRoutes) add(r Route, checkExists bool) (added bool, err error) {
 	if r.Destination == nil {
 		return false, fmt.Errorf("route has no destination")
 	}
 
 	// macOS `route add` does not reliably fail on duplicates, so check first
 	// to keep the operation idempotent.
-	if exists, err := k.RouteExists(r.Destination); err == nil && exists {
-		return false, nil
+	if checkExists {
+		if exists, err := k.RouteExists(r.Destination); err == nil && exists {
+			return false, nil
+		}
 	}
 
 	args := []string{"-n", "add"}

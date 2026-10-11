@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 
 	"github.com/vishvananda/netlink"
 )
@@ -85,15 +86,25 @@ func (k *KernelRoutes) RouteExists(destination *net.IPNet) (bool, error) {
 // Add adds a route to the kernel routing table. Returns true if the route was added,
 // false if it already existed (idempotent).
 func (k *KernelRoutes) Add(r Route) (added bool, err error) {
+	return k.add(r, true)
+}
+
+// add adds a route to the kernel routing table. When checkExists is false the
+// pre-add existence lookup (a full route dump) is skipped: the caller's diff
+// already established the route is absent, and a duplicate reported by the
+// kernel is treated as "already existed".
+func (k *KernelRoutes) add(r Route, checkExists bool) (added bool, err error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
-	exists, err := k.routeExistsLocked(r.Destination)
-	if err != nil {
-		return false, err
-	}
-	if exists {
-		return false, nil
+	if checkExists {
+		exists, err := k.routeExistsLocked(r.Destination)
+		if err != nil {
+			return false, err
+		}
+		if exists {
+			return false, nil
+		}
 	}
 
 	// Build netlink route
@@ -113,6 +124,9 @@ func (k *KernelRoutes) Add(r Route) (added bool, err error) {
 	}
 
 	if err := netlink.RouteAdd(nlRoute); err != nil {
+		if errors.Is(err, syscall.EEXIST) {
+			return false, nil // already present
+		}
 		return false, fmt.Errorf("failed to add route: %w", err)
 	}
 

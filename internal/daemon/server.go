@@ -802,7 +802,8 @@ func (s *Server) syncRoutes() error {
 	plan.ToRemove = filterOutDests(plan.ToRemove, self)
 
 	s.routeEvents.recordPlan(plan, destSet(autoRoutes), destSet(configRoutes), self)
-	return s.routeMgr.Apply(plan)
+	_, err = s.routeMgr.Apply(plan)
+	return err
 }
 
 // filterOutDests returns routes whose destination string is not in skip.

@@ -69,11 +69,21 @@ func (k *KernelRoutes) TUNName() string {
 // Add adds a route to the kernel routing table. Returns true if added,
 // false if it already existed (idempotent).
 func (k *KernelRoutes) Add(r Route) (added bool, err error) {
+	return k.add(r, true)
+}
+
+// add adds a route to the kernel routing table. When checkExists is false the
+// pre-add existence lookup (a full route dump) is skipped: the caller's diff
+// already established the route is absent, and ERROR_OBJECT_ALREADY_EXISTS
+// from the OS is treated as "already existed".
+func (k *KernelRoutes) add(r Route, checkExists bool) (added bool, err error) {
 	if r.Destination == nil {
 		return false, fmt.Errorf("route has no destination")
 	}
-	if exists, err := k.RouteExists(r.Destination); err == nil && exists {
-		return false, nil
+	if checkExists {
+		if exists, err := k.RouteExists(r.Destination); err == nil && exists {
+			return false, nil
+		}
 	}
 
 	dest, ok := ipNetToPrefix(r.Destination)

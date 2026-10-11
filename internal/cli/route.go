@@ -458,7 +458,7 @@ func newRouteApplyCmd() *cobra.Command {
 				return nil
 			}
 
-			if err := mgr.Apply(plan); err != nil {
+			if _, err := mgr.Apply(plan); err != nil {
 				return fmt.Errorf("failed to apply routes: %w", err)
 			}
 
