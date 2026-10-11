@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"syscall"
 
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/daemon"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/daemon"
 )
 
 // signalReloadFallback reloads the daemon when the control socket is

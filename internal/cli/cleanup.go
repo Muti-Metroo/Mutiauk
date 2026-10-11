@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/postalsys/mutiauk/internal/config"
-	meshdns "github.com/postalsys/mutiauk/internal/dns"
-	"github.com/postalsys/mutiauk/internal/route"
-	"github.com/postalsys/mutiauk/internal/service"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	meshdns "github.com/Muti-Metroo/Mutiauk/internal/dns"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/service"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )

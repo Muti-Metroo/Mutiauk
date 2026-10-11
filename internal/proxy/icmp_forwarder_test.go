@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/postalsys/mutiauk/internal/socks5"
+	"github.com/Muti-Metroo/Mutiauk/internal/socks5"
 	"go.uber.org/zap"
 )
 

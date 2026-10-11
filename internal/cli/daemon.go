@@ -5,9 +5,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/postalsys/mutiauk/internal/api"
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/daemon"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/daemon"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )

@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/postalsys/mutiauk/internal/service"
+	"github.com/Muti-Metroo/Mutiauk/internal/service"
 )
 
 // removeTUNAdapter deletes the kernel TUN interface. On Linux it uses

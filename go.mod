@@ -1,4 +1,4 @@
-module github.com/postalsys/mutiauk
+module github.com/Muti-Metroo/Mutiauk
 
 go 1.25.5
 

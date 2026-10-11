@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/postalsys/mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
 )
 
 func mustParseCIDR(s string) *net.IPNet {

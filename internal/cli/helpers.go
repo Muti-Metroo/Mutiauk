@@ -9,10 +9,10 @@ import (
 	"net"
 	"time"
 
-	"github.com/postalsys/mutiauk/internal/api"
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/daemon"
-	"github.com/postalsys/mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/daemon"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
 )
 
 // emitJSON writes v to w as 2-space-indented JSON. Centralised so

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/postalsys/mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
 )
 
 const minimalAnswers = `tun:

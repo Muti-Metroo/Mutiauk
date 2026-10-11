@@ -5,8 +5,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/postalsys/mutiauk/internal/config"
-	meshdns "github.com/postalsys/mutiauk/internal/dns"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	meshdns "github.com/Muti-Metroo/Mutiauk/internal/dns"
 )
 
 // fakeIntegration records every Apply / Revert call so tests can

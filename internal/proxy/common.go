@@ -8,7 +8,7 @@ import (
 	"net/netip"
 	"sync"
 
-	"github.com/postalsys/mutiauk/internal/socks5"
+	"github.com/Muti-Metroo/Mutiauk/internal/socks5"
 )
 
 const (

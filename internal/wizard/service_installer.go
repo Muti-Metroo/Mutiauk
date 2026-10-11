@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/postalsys/mutiauk/internal/service"
-	"github.com/postalsys/mutiauk/internal/wizard/prompt"
+	"github.com/Muti-Metroo/Mutiauk/internal/service"
+	"github.com/Muti-Metroo/Mutiauk/internal/wizard/prompt"
 )
 
 // ServiceInstaller handles the interactive service installation flow.

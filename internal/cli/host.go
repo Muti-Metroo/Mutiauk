@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/postalsys/mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
 	"github.com/spf13/cobra"
 )
 

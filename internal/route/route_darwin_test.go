@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/postalsys/mutiauk/internal/tun"
+	"github.com/Muti-Metroo/Mutiauk/internal/tun"
 	xroute "golang.org/x/net/route"
 	"golang.org/x/sys/unix"
 )

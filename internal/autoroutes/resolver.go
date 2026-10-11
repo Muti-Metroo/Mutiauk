@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/postalsys/mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
 )
 
 // AutoRoute is a route with origin information for conflict resolution

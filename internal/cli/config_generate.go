@@ -7,8 +7,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/wizard"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/wizard"
 )
 
 // generateOpts collects all the inputs to the non-interactive config

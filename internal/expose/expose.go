@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/postalsys/mutiauk/internal/backoff"
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/socks5"
+	"github.com/Muti-Metroo/Mutiauk/internal/backoff"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/socks5"
 	"go.uber.org/zap"
 )
 

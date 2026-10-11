@@ -24,8 +24,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/postalsys/mutiauk/internal/api"
-	"github.com/postalsys/mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
 )
 
 // Server is the admin HTTP interface. It wraps an api.StateProvider and

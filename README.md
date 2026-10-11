@@ -36,11 +36,11 @@ traffic through a SOCKS5 proxy using Google's gVisor userspace TCP/IP stack.
 ## Installation
 
 Download the latest release from the
-[Releases](https://github.com/postalsys/Mutiauk/releases) page.
+[Releases](https://github.com/Muti-Metroo/Mutiauk/releases) page.
 
 ```bash
 # Download
-curl -L -o mutiauk https://github.com/postalsys/Mutiauk/releases/latest/download/mutiauk-linux-amd64
+curl -L -o mutiauk https://github.com/Muti-Metroo/Mutiauk/releases/latest/download/mutiauk-linux-amd64
 chmod +x mutiauk
 sudo mv mutiauk /usr/local/bin/
 ```

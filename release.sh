@@ -9,7 +9,7 @@ cd "$SCRIPT_DIR"
 # --- Configuration ---
 API_URL="https://api.github.com"
 UPLOAD_URL="https://uploads.github.com"
-REPO="postalsys/Mutiauk"
+REPO="Muti-Metroo/Mutiauk"
 VERSION_FILE="VERSION"
 BINARY="mutiauk"
 TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN env var is required}"
@@ -82,7 +82,7 @@ echo ""
 echo "=== Building binaries (Docker) ==="
 
 GO_VERSION="1.25"
-LDFLAGS="-s -w -buildid= -X github.com/postalsys/mutiauk/internal/cli.Version=${NEW_VERSION}"
+LDFLAGS="-s -w -buildid= -X github.com/Muti-Metroo/Mutiauk/internal/cli.Version=${NEW_VERSION}"
 
 rm -rf dist/
 mkdir -p dist/

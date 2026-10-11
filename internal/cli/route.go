@@ -6,9 +6,9 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/postalsys/mutiauk/internal/api"
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
 	"github.com/spf13/cobra"
 )
 

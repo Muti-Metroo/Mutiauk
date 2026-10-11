@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/postalsys/mutiauk/internal/api"
-	"github.com/postalsys/mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
 )
 
 const testToken = "test-admin-token"

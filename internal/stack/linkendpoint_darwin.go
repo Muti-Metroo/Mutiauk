@@ -5,7 +5,7 @@ package stack
 import (
 	"context"
 
-	"github.com/postalsys/mutiauk/internal/tun"
+	"github.com/Muti-Metroo/Mutiauk/internal/tun"
 	"go.uber.org/zap"
 	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"

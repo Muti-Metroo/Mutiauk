@@ -12,10 +12,10 @@ management, service integration, and diagnostics.
 
 Companion projects:
 
-- **Muti Metroo** (`github.com/postalsys/Muti-Metroo`) - the mesh agent Mutiauk
+- **Muti Metroo** (`github.com/Muti-Metroo/Muti-Metroo`) - the mesh agent Mutiauk
   connects to. Its SOCKS5 endpoint is Mutiauk's data plane; the agent dashboard
   feeds autoroutes/DNS, and expose streams ride the same endpoint.
-- **Muti Metroo Manager** (`github.com/postalsys/Muti-Metroo-Manager`) - the
+- **Muti Metroo Manager** (`github.com/Muti-Metroo/Muti-Metroo-Manager`) - the
   central management UI/API.
 
 Supported platforms: Linux (`/dev/net/tun`, netlink, systemd,
@@ -103,7 +103,7 @@ config in `.github/release-please-config.json`, manifest pin in
 - Product names: **Mutiauk** (this binary), **Muti Metroo** (the mesh agent),
   **Muti Metroo Manager** (the management UI). Never reintroduce legacy fork
   branding; `git grep -in 'meshy'` must stay empty.
-- Module path is `github.com/postalsys/mutiauk`; the binary is `mutiauk`.
+- Module path is `github.com/Muti-Metroo/Mutiauk`; the binary is `mutiauk`.
 - Environment variables: `MUTIAUK_SOCKS5_PASSWORD` (this daemon's SOCKS5
   password), `MUTI_METROO_TOKEN` (the Muti Metroo agent API token).
 - **English-only, ASCII-only** in code, comments, docs, and commit messages

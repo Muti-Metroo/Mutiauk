@@ -11,9 +11,9 @@ import (
 
 	"nhooyr.io/websocket"
 
-	"github.com/postalsys/mutiauk/internal/api"
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/socks5"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/socks5"
 )
 
 // wsSOCKS5MockServer answers the SOCKS5 protocol over WebSocket: each

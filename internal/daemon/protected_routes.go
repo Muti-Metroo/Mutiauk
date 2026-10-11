@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/postalsys/mutiauk/internal/api"
-	"github.com/postalsys/mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
 	"go.uber.org/zap"
 )
 

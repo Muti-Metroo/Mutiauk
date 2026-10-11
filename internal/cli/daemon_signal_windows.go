@@ -5,7 +5,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/postalsys/mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
 )
 
 // signalReloadFallback has no signal equivalent on Windows; reload must

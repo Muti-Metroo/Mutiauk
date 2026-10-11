@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/postalsys/mutiauk/internal/daemon"
+	"github.com/Muti-Metroo/Mutiauk/internal/daemon"
 	"go.uber.org/zap"
 )
 

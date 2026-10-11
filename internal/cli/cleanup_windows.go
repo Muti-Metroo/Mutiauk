@@ -5,8 +5,8 @@ package cli
 import (
 	"fmt"
 
-	"github.com/postalsys/mutiauk/internal/service"
-	"github.com/postalsys/mutiauk/internal/tun"
+	"github.com/Muti-Metroo/Mutiauk/internal/service"
+	"github.com/Muti-Metroo/Mutiauk/internal/tun"
 )
 
 // removeTUNAdapter deletes the Wintun adapter left behind by a crashed

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/postalsys/mutiauk/internal/tun"
+	"github.com/Muti-Metroo/Mutiauk/internal/tun"
 	"go.uber.org/zap"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )

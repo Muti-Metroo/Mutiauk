@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/wizard/prompt"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/wizard/prompt"
 )
 
 // feed scripts the prompt package's input for the interactive ask*

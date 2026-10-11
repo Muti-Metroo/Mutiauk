@@ -10,9 +10,9 @@ import (
 	mdns "github.com/miekg/dns"
 	"github.com/spf13/cobra"
 
-	"github.com/postalsys/mutiauk/internal/api"
-	"github.com/postalsys/mutiauk/internal/config"
-	meshdns "github.com/postalsys/mutiauk/internal/dns"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	meshdns "github.com/Muti-Metroo/Mutiauk/internal/dns"
 )
 
 func newDNSCmd() *cobra.Command {

@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/postalsys/mutiauk/internal/api"
-	"github.com/postalsys/mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
 )
 
 // routeEventCapacity bounds the in-memory route-change log. The log is a

@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/postalsys/mutiauk/internal/api"
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/daemon"
-	"github.com/postalsys/mutiauk/internal/socks5"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/daemon"
+	"github.com/Muti-Metroo/Mutiauk/internal/socks5"
 	"github.com/spf13/cobra"
 )
 

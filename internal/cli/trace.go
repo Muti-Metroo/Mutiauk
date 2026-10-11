@@ -7,11 +7,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/postalsys/mutiauk/internal/api"
-	"github.com/postalsys/mutiauk/internal/autoroutes"
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/route"
-	"github.com/postalsys/mutiauk/internal/socks5"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/autoroutes"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/socks5"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )

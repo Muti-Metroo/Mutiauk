@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/postalsys/mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
 )
 
 // shortSocketPath returns a unix-socket path short enough for the platform

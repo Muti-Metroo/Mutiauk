@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/nat"
-	"github.com/postalsys/mutiauk/internal/proxy"
-	"github.com/postalsys/mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/nat"
+	"github.com/Muti-Metroo/Mutiauk/internal/proxy"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
 	"go.uber.org/zap"
 )
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/postalsys/mutiauk/internal/socks5"
+	"github.com/Muti-Metroo/Mutiauk/internal/socks5"
 )
 
 func TestMapAssociateError_SOCKS5Codes(t *testing.T) {

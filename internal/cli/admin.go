@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/postalsys/mutiauk/internal/adminhttp"
+	"github.com/Muti-Metroo/Mutiauk/internal/adminhttp"
 )
 
 // newAdminCmd prints a login URL for the loopback admin dashboard. The

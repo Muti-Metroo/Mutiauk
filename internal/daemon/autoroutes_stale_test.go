@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/postalsys/mutiauk/internal/autoroutes"
-	"github.com/postalsys/mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/autoroutes"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )

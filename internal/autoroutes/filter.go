@@ -3,7 +3,7 @@ package autoroutes
 import (
 	"net"
 
-	"github.com/postalsys/mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
 )
 
 // unsafeRoutes are routes that should never be added automatically.

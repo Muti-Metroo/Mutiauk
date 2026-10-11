@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/postalsys/mutiauk/internal/cli"
+	"github.com/Muti-Metroo/Mutiauk/internal/cli"
 )
 
 func main() {

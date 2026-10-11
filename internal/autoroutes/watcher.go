@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/postalsys/mutiauk/internal/backoff"
-	"github.com/postalsys/mutiauk/internal/route"
-	"github.com/postalsys/mutiauk/internal/socks5"
+	"github.com/Muti-Metroo/Mutiauk/internal/backoff"
+	"github.com/Muti-Metroo/Mutiauk/internal/route"
+	"github.com/Muti-Metroo/Mutiauk/internal/socks5"
 	"go.uber.org/zap"
 )
 

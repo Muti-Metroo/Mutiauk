@@ -6,7 +6,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/postalsys/mutiauk/internal/autoroutes"
+	"github.com/Muti-Metroo/Mutiauk/internal/autoroutes"
 )
 
 func TestDashboardHostsToMeshHosts(t *testing.T) {

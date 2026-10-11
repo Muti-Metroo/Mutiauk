@@ -5,8 +5,8 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/postalsys/mutiauk/internal/config"
-	"github.com/postalsys/mutiauk/internal/service"
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
+	"github.com/Muti-Metroo/Mutiauk/internal/service"
 	"github.com/spf13/cobra"
 )
 

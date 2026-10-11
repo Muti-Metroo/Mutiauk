@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/postalsys/mutiauk/internal/api"
+	"github.com/Muti-Metroo/Mutiauk/internal/api"
 )
 
 //go:embed index.html

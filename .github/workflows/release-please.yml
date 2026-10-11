@@ -54,7 +54,7 @@ jobs:
           VERSION=${VERSION#v}
           BINARY_NAME="mutiauk-${{ matrix.goos }}-${{ matrix.goarch }}"
           go build -trimpath \
-            -ldflags="-s -w -X github.com/postalsys/mutiauk/internal/cli.Version=$VERSION" \
+            -ldflags="-s -w -X github.com/Muti-Metroo/Mutiauk/internal/cli.Version=$VERSION" \
             -o "$BINARY_NAME" \
             ./cmd/mutiauk
 
