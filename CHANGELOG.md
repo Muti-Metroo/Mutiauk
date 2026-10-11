@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.5.3](https://github.com/postalsys/Mutiauk/compare/mutiauk-v0.5.2...mutiauk-v0.5.3) (2026-10-11)
+
+
+### Bug Fixes
+
+* **adminhttp:** require token auth on all endpoints ([aef400b](https://github.com/postalsys/Mutiauk/commit/aef400bca6f916ae2d40c678175d995a109b5370))
+* **daemon:** add single-instance guard via locked PID file ([49aadf5](https://github.com/postalsys/Mutiauk/commit/49aadf524f670f322348200ff7dd36fa5edfe831)), closes [#34](https://github.com/postalsys/Mutiauk/issues/34)
+* **daemon:** retry failed DNS start from route-watch; roll back partial init ([8eef0e4](https://github.com/postalsys/Mutiauk/commit/8eef0e40ae44ee5bb66dd8df1f1e64263ef6e689)), closes [#33](https://github.com/postalsys/Mutiauk/issues/33)
+* **daemon:** validate reloaded config, restart autoroutes watcher on server change ([9efce05](https://github.com/postalsys/Mutiauk/commit/9efce050e53b25921fe9ef46a64bf7504451f35d)), closes [#32](https://github.com/postalsys/Mutiauk/issues/32)
+* **dns:** revert stale DNS state at startup even with autoroutes disabled ([aae2d4e](https://github.com/postalsys/Mutiauk/commit/aae2d4e01d84fb08e350ebe6c24a63f6cc029938)), closes [#31](https://github.com/postalsys/Mutiauk/issues/31)
+* **dns:** validate agent-supplied suffixes against strict DNS charset ([991faaf](https://github.com/postalsys/Mutiauk/commit/991faaf179c64d2ad74bdec8dd0f050c1b0e43fb))
+* **nat:** never GC entries whose forwarding handler is still active ([c94fe8a](https://github.com/postalsys/Mutiauk/commit/c94fe8a4083f469731813b0f95e009026bb52a10)), closes [#23](https://github.com/postalsys/Mutiauk/issues/23)
+* **proxy:** create ICMP sessions outside the forwarder lock ([0fbdd2f](https://github.com/postalsys/Mutiauk/commit/0fbdd2f86e1ca694e3a00e83214305c551161a25)), closes [#28](https://github.com/postalsys/Mutiauk/issues/28)
+* **proxy:** demux UDP responses per relay association instead of strict request/response ([c8fcb34](https://github.com/postalsys/Mutiauk/commit/c8fcb3469e8adddfedfaeb42ae4a0458e35df260)), closes [#22](https://github.com/postalsys/Mutiauk/issues/22)
+* **proxy:** propagate TCP half-close in bidirectional copy ([04437e7](https://github.com/postalsys/Mutiauk/commit/04437e7dc1a04ef6f2bfae6a9c97368af789cf64)), closes [#24](https://github.com/postalsys/Mutiauk/issues/24)
+* recover panics in packet-path goroutines; restart Windows service on failure ([cce74ea](https://github.com/postalsys/Mutiauk/commit/cce74eaffdee0c9ebbcc7f948f19123392c2fccb)), closes [#30](https://github.com/postalsys/Mutiauk/issues/30)
+* **socks5:** add WebSocket ping keepalive, interruptible deadlines, empty-message skip ([a5fd22a](https://github.com/postalsys/Mutiauk/commit/a5fd22a187729dd0b5e9dcb486cacf48aff4e83e)), closes [#29](https://github.com/postalsys/Mutiauk/issues/29)
+* **socks5:** evict UDP relay when its control connection dies ([69d7a62](https://github.com/postalsys/Mutiauk/commit/69d7a62784ff6053b345435a8a1bc74565a77387)), closes [#25](https://github.com/postalsys/Mutiauk/issues/25)
+* **stack:** cap in-flight TCP forwarder connections at 1024 ([e713c89](https://github.com/postalsys/Mutiauk/commit/e713c89df242ccd0157cc7ec5bb0bb7b69571ac3)), closes [#26](https://github.com/postalsys/Mutiauk/issues/26)
+* **stack:** clamp synthesized UDP responses to the link MTU ([c93506d](https://github.com/postalsys/Mutiauk/commit/c93506d3fdaadfb38c319cb1351c9e995b3d1287)), closes [#27](https://github.com/postalsys/Mutiauk/issues/27)
+* **stack:** never intercept fragmented IPv4 UDP/ICMP packets ([23d1e63](https://github.com/postalsys/Mutiauk/commit/23d1e6369580ceee6fb92b8bb73ee735bfa22f74)), closes [#21](https://github.com/postalsys/Mutiauk/issues/21)
+* surface autoroutes staleness and record route events from apply results ([17fe6f7](https://github.com/postalsys/Mutiauk/commit/17fe6f7dcc62debce0d8acd145c338f4a40940ef)), closes [#36](https://github.com/postalsys/Mutiauk/issues/36)
+
+
+### Performance Improvements
+
+* cut per-packet copies, log evaluation, and route-apply quadratic cost ([4667938](https://github.com/postalsys/Mutiauk/commit/466793825551bef9041ab7694314975929eac5a1)), closes [#35](https://github.com/postalsys/Mutiauk/issues/35)
+
 ## [0.5.2](https://github.com/postalsys/Mutiauk/compare/mutiauk-v0.5.1...mutiauk-v0.5.2) (2026-10-11)
 
 
