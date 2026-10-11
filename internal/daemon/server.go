@@ -910,18 +910,42 @@ func (s *Server) AddRoute(dest, comment string, persist bool) error {
 	s.routeEvents.record("added", ipNet.String(), "manual", comment)
 
 	if persist {
-		cfg.Routes = append(cfg.Routes, config.RouteConfig{
-			Destination: dest,
-			Comment:     comment,
-			Enabled:     true,
-		})
-		s.cfg.Store(cfg)
-		if err := cfg.Save(s.configPath); err != nil {
+		next := configWithRouteAdded(cfg, dest, comment)
+		s.cfg.Store(next)
+		if err := next.Save(s.configPath); err != nil {
 			return fmt.Errorf("route added but failed to save config: %w", err)
 		}
 	}
 
 	return nil
+}
+
+// configWithRouteAdded returns a copy of cfg with the route appended. The
+// input is never mutated: the stored config pointer is shared with
+// concurrent readers (GetRoutes, GetStatus), so in-place append/splice
+// would race with them.
+func configWithRouteAdded(cfg *config.Config, dest, comment string) *config.Config {
+	next := *cfg
+	next.Routes = append(slices.Clone(cfg.Routes), config.RouteConfig{
+		Destination: dest,
+		Comment:     comment,
+		Enabled:     true,
+	})
+	return &next
+}
+
+// configWithRouteRemoved returns a copy of cfg with the first route matching
+// dest dropped. The input is never mutated (see configWithRouteAdded).
+func configWithRouteRemoved(cfg *config.Config, dest string) *config.Config {
+	next := *cfg
+	next.Routes = slices.Clone(cfg.Routes)
+	for i, rc := range next.Routes {
+		if rc.Destination == dest {
+			next.Routes = append(next.Routes[:i], next.Routes[i+1:]...)
+			break
+		}
+	}
+	return &next
 }
 
 // RemoveRoute removes a route and optionally persists to config
@@ -942,14 +966,9 @@ func (s *Server) RemoveRoute(dest string, persist bool) error {
 
 	if persist {
 		cfg := s.cfg.Load()
-		for i, rc := range cfg.Routes {
-			if rc.Destination == dest {
-				cfg.Routes = append(cfg.Routes[:i], cfg.Routes[i+1:]...)
-				break
-			}
-		}
-		s.cfg.Store(cfg)
-		if err := cfg.Save(s.configPath); err != nil {
+		next := configWithRouteRemoved(cfg, dest)
+		s.cfg.Store(next)
+		if err := next.Save(s.configPath); err != nil {
 			return fmt.Errorf("route removed but failed to save config: %w", err)
 		}
 	}
