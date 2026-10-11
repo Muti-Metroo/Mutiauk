@@ -163,12 +163,13 @@ nat:
   table_size: 65536
   # TCP connection idle timeout.
   #
-  # The 1h default reaps idle entries aggressively, which will
-  # reset long-lived SSH sessions, monitoring sockets, and similar
-  # operator workflows. Bump to 24h (or higher) when operators rely
-  # on long-lived shells; the daemon's own TCP keepalive
-  # (socks5.keepalive) is still the liveness signal, so a longer
-  # timeout does not delay detection of dead peers.
+  # Entries whose forwarding handler is still active are never
+  # reaped, so long-lived SSH sessions and monitoring sockets are
+  # safe regardless of this value. The timeout only bounds how
+  # long an entry may linger after its handler is gone (a leak
+  # safety net), so the 1h default rarely needs changing. The
+  # daemon's own TCP keepalive (socks5.keepalive) is still the
+  # liveness signal for dead peers.
   tcp_timeout: 1h
   # UDP connection idle timeout.
   udp_timeout: 5m

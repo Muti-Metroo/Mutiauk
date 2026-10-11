@@ -71,6 +71,11 @@ func (f *UDPForwarder) HandleUDP(ctx context.Context, conn net.PacketConn, srcAd
 
 	if err := f.natTable.Insert(entry); err != nil {
 		f.logger.Debug("NAT entry already exists", zap.Error(err))
+	} else {
+		// Hold a reference for the lifetime of the relay loop so the NAT GC
+		// cannot expire this entry while it is still in use.
+		entry.Acquire()
+		defer entry.Release()
 	}
 	defer f.natTable.Remove("udp", srcAddrPort, dstAddrPort)
 

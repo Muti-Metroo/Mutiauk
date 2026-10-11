@@ -124,6 +124,12 @@ func (f *TCPForwarder) HandleTCP(ctx context.Context, conn net.Conn, srcAddr, ds
 
 	if err := f.natTable.Insert(entry); err != nil {
 		f.logger.Debug("failed to insert NAT entry (may already exist)", zap.Error(err))
+	} else {
+		// Hold a reference for the lifetime of the copy loop so the NAT GC
+		// cannot expire this entry (and close proxyConn) while the
+		// connection is still active.
+		entry.Acquire()
+		defer entry.Release()
 	}
 	defer f.natTable.Remove("tcp", srcAddrPort, dstAddrPort)
 

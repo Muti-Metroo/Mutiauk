@@ -50,9 +50,15 @@ func (t *Table) gc(logger *zap.Logger) {
 		entry.mu.Lock()
 		isExpired := now.Sub(entry.LastSeen) > entry.TTL
 		isClosed := entry.State == ConnStateClosed
+		inUse := entry.refs > 0
 		entry.mu.Unlock()
 
-		if isExpired || isClosed {
+		// An entry whose handler is still active (refs > 0) is never
+		// expired: LastSeen only advances on lookups, so a busy long-lived
+		// connection would otherwise be torn down mid-stream once it
+		// outlives its TTL. The handler's deferred Remove releases the
+		// reference and deletes the entry when the copy loop exits.
+		if isClosed || (isExpired && !inUse) {
 			expired = append(expired, key)
 			toClose = append(toClose, entry)
 		}

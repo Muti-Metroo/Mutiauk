@@ -685,7 +685,6 @@ func TestGCNow(t *testing.T) {
 	table := NewTable(Config{
 		TCPTTL: 50 * time.Millisecond,
 	})
-
 	// Insert an entry
 	entry := &Entry{
 		Protocol: "tcp",
@@ -731,6 +730,118 @@ func TestGCClosedEntries(t *testing.T) {
 	// Closed entry should be removed even if not expired
 	if table.Size() != 0 {
 		t.Errorf("Size() = %v, want 0 after GC", table.Size())
+	}
+}
+
+func TestGCActiveEntrySurvivesTTL(t *testing.T) {
+	table := NewTable(Config{
+		TCPTTL: 50 * time.Millisecond,
+	})
+
+	// Simulate a live proxied connection.
+	proxyConn, peer := net.Pipe()
+	defer peer.Close()
+
+	entry := &Entry{
+		Protocol:  "tcp",
+		SrcAddr:   netip.MustParseAddrPort("192.168.1.1:12345"),
+		DstAddr:   netip.MustParseAddrPort("10.0.0.1:80"),
+		ProxyConn: proxyConn,
+	}
+	table.Insert(entry)
+
+	// Handler holds a reference while its copy loop is running.
+	entry.Acquire()
+
+	// Let the entry age well past its TTL.
+	time.Sleep(100 * time.Millisecond)
+
+	table.GCNow(zap.NewNop())
+
+	// The entry must survive: it is past its TTL but still in use.
+	if table.Size() != 1 {
+		t.Fatalf("Size() = %v, want 1: GC collected an in-use entry", table.Size())
+	}
+
+	// GC's close path goes through Entry.Close, which sets the state.
+	if entry.GetState() == ConnStateClosed {
+		t.Error("entry closed by GC while in use")
+	}
+
+	// After the handler releases, GC collects the expired entry.
+	entry.Release()
+	table.GCNow(zap.NewNop())
+
+	if table.Size() != 0 {
+		t.Errorf("Size() = %v, want 0 after Release + GC", table.Size())
+	}
+}
+
+func TestGCCollectsEntryAfterRemove(t *testing.T) {
+	table := NewTable(Config{
+		TCPTTL: time.Hour, // Long TTL: expiry is not the trigger here.
+	})
+
+	proxyConn, peer := net.Pipe()
+	defer peer.Close()
+
+	src := netip.MustParseAddrPort("192.168.1.1:12345")
+	dst := netip.MustParseAddrPort("10.0.0.1:80")
+
+	entry := &Entry{
+		Protocol:  "tcp",
+		SrcAddr:   src,
+		DstAddr:   dst,
+		ProxyConn: proxyConn,
+	}
+	table.Insert(entry)
+	entry.Acquire()
+
+	// Handler exits: releases the reference and removes the entry.
+	entry.Release()
+	table.Remove("tcp", src, dst)
+
+	if table.Size() != 0 {
+		t.Errorf("Size() = %v, want 0 after Remove", table.Size())
+	}
+	if entry.GetState() != ConnStateClosed {
+		t.Errorf("State = %v, want CLOSED", entry.GetState())
+	}
+	if _, err := proxyConn.Write([]byte("x")); err == nil {
+		t.Error("ProxyConn should be closed after Remove")
+	}
+
+	// GC afterwards is a no-op for the removed entry.
+	table.GCNow(zap.NewNop())
+}
+
+func TestEntryAcquireRelease(t *testing.T) {
+	entry := &Entry{}
+
+	if entry.InUse() {
+		t.Error("InUse() = true for a fresh entry")
+	}
+
+	entry.Acquire()
+	entry.Acquire()
+	if !entry.InUse() {
+		t.Error("InUse() = false after Acquire")
+	}
+
+	entry.Release()
+	if !entry.InUse() {
+		t.Error("InUse() = false with one reference left")
+	}
+
+	entry.Release()
+	if entry.InUse() {
+		t.Error("InUse() = true after all references released")
+	}
+
+	// Releasing without a matching Acquire must not underflow.
+	entry.Release()
+	if entry.InUse() {
+		t.Error("InUse() = true after unmatched Release")
 	}
 }
 

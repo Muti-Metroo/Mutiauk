@@ -122,7 +122,7 @@ Expose: Mesh peer -> Muti Metroo agent listener -> Muti Metroo -> SOCKS5 CmdExpo
 
 **socks5/client.go** - SOCKS5 client supporting CONNECT (TCP) and UDP ASSOCIATE. Handles authentication (none or username/password).
 
-**nat/table.go** - Connection tracking with TTL-based expiration. Maps (protocol, src, dst) -> proxy connection. Background GC goroutine cleans stale entries.
+**nat/table.go** - Connection tracking with TTL-based expiration. Maps (protocol, src, dst) -> proxy connection. Background GC goroutine cleans stale entries, but skips entries whose forwarding handler holds a reference (Acquire/Release), so active connections are never reaped mid-stream no matter how old they are.
 
 **route/manager.go** - Linux route management via netlink. Supports idempotent add/remove, plan/diff for declarative route management, conflict detection for overlapping CIDRs.
 

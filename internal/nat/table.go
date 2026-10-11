@@ -45,8 +45,36 @@ type Entry struct {
 	State     ConnState
 	TTL       time.Duration
 
-	mu        sync.Mutex // Protects State and LastSeen
+	mu        sync.Mutex // Protects State, LastSeen, and refs
 	closeOnce sync.Once  // Guards Close() against double-call
+	refs      int        // Active handler references; GC skips entries with refs > 0
+}
+
+// Acquire marks the entry as in use by an active forwarding handler.
+// The GC will not expire the entry, no matter how old LastSeen is, until
+// every reference is released. Handlers must pair each Acquire with a
+// Release when their copy loop exits.
+func (e *Entry) Acquire() {
+	e.mu.Lock()
+	e.refs++
+	e.mu.Unlock()
+}
+
+// Release drops one active-handler reference acquired with Acquire.
+func (e *Entry) Release() {
+	e.mu.Lock()
+	if e.refs > 0 {
+		e.refs--
+	}
+	e.mu.Unlock()
+}
+
+// InUse reports whether any forwarding handler still holds a reference
+// to the entry.
+func (e *Entry) InUse() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.refs > 0
 }
 
 // Touch updates the last seen time
