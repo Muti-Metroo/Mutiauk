@@ -409,8 +409,8 @@ func (m *mockUDPHandler) HandleUDP(ctx context.Context, conn net.PacketConn, src
 
 type mockRawUDPHandler struct{}
 
-func (m *mockRawUDPHandler) HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte) ([]byte, error) {
-	return nil, nil
+func (m *mockRawUDPHandler) HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte, reply UDPReplyFunc) error {
+	return nil
 }
 
 type mockUDPPacketHandler struct{}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/postalsys/mutiauk/internal/socks5"
+	"github.com/postalsys/mutiauk/internal/stack"
 	"go.uber.org/zap"
 )
 
@@ -19,7 +20,15 @@ var udpBufPool = sync.Pool{
 	},
 }
 
-// RawUDPForwarder handles raw UDP packet forwarding through SOCKS5.
+// RawUDPForwarder forwards raw UDP packets through SOCKS5 UDP associations.
+//
+// Each association (keyed by the local srcIP:srcPort, preserving SOCKS5 UDP
+// ASSOCIATE semantics) owns a reader goroutine that continuously drains the
+// relay socket, demultiplexes response datagrams by their responder address,
+// and delivers them through the reply callback. HandleRawUDP never blocks
+// waiting for a response: datagrams are forwarded independently, so
+// multi-datagram responses, interleaved destinations, and one-way flows all
+// behave like plain UDP.
 type RawUDPForwarder struct {
 	clientHolder
 	logger    *zap.Logger
@@ -41,60 +50,88 @@ func (f *RawUDPForwarder) UpdateClient(client *socks5.Client) {
 	f.relayPool.Clear()
 }
 
-// HandleRawUDP forwards a UDP packet through SOCKS5 and returns the response.
-func (f *RawUDPForwarder) HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte) ([]byte, error) {
+// HandleRawUDP forwards a single UDP datagram through the SOCKS5 relay
+// association for srcIP:srcPort. It returns once the datagram is sent;
+// responses are delivered asynchronously via reply.
+func (f *RawUDPForwarder) HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte, reply stack.UDPReplyFunc) error {
 	client := f.clientHolder.Get()
+	if client == nil {
+		return fmt.Errorf("no SOCKS5 client configured")
+	}
 
-	relay, err := f.relayPool.GetOrCreate(ctx, addrKey(srcIP, srcPort), func(ctx context.Context) (*socks5.UDPRelay, error) {
+	key := addrKey(srcIP, srcPort)
+	relay, err := f.relayPool.GetOrCreate(ctx, key, func(ctx context.Context) (*socks5.UDPRelay, error) {
 		r, err := client.UDPAssociate(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
 		f.logger.Debug("created new UDP relay",
-			zap.String("key", addrKey(srcIP, srcPort)),
+			zap.String("key", key),
 			zap.String("local", r.LocalAddr().String()),
 			zap.String("relay_addr", r.RemoteAddr()),
 		)
+		f.startRelayReader(key, r, srcIP, srcPort, reply)
 		return r, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to get UDP relay: %w", err)
+		return fmt.Errorf("failed to get UDP relay: %w", err)
 	}
 
 	target := newSOCKS5Address(dstIP, dstPort)
 
 	f.logger.Debug("sending UDP via SOCKS5",
-		zap.String("src", addrKey(srcIP, srcPort)),
+		zap.String("src", key),
 		zap.String("dst", target.String()),
 		zap.Int("payload_len", len(payload)),
 	)
 
 	if err := relay.Send(payload, target); err != nil {
-		return nil, fmt.Errorf("failed to send UDP: %w", err)
+		return fmt.Errorf("failed to send UDP: %w", err)
 	}
 
-	f.logger.Debug("waiting for UDP response")
-	relay.SetReadDeadline(time.Now().Add(5 * time.Second))
-	bufp := udpBufPool.Get().(*[]byte)
-	buf := *bufp
-	n, remoteAddr, err := relay.Receive(buf)
-	if err != nil {
-		udpBufPool.Put(bufp)
-		f.logger.Debug("UDP receive timeout or error", zap.Error(err))
-		return nil, nil
-	}
+	return nil
+}
 
-	// Copy the response before returning the buffer to the pool
-	response := make([]byte, n)
-	copy(response, buf[:n])
-	udpBufPool.Put(bufp)
+// startRelayReader spawns the demux reader goroutine for a relay association.
+// Every datagram that arrives on the relay is matched to its responder by the
+// SOCKS5 datagram header and delivered to the association's local client with
+// the responder's address. When the reader stops (relay closed or socket
+// error), the association is evicted from the pool so the next packet creates
+// a fresh one.
+func (f *RawUDPForwarder) startRelayReader(key string, relay *socks5.UDPRelay, clientIP net.IP, clientPort uint16, reply stack.UDPReplyFunc) {
+	go func() {
+		defer f.relayPool.Remove(key, relay)
 
-	f.logger.Debug("received UDP response via SOCKS5",
-		zap.String("remote", remoteAddr.String()),
-		zap.Int("len", n),
-	)
+		bufp := udpBufPool.Get().(*[]byte)
+		defer udpBufPool.Put(bufp)
+		buf := *bufp
 
-	return response, nil
+		for {
+			n, responder, err := relay.Receive(buf)
+			if err != nil {
+				f.logger.Debug("UDP relay reader stopped",
+					zap.String("key", key),
+					zap.Error(err),
+				)
+				return
+			}
+			if responder == nil || responder.IP == nil || reply == nil {
+				continue
+			}
+
+			// Copy the payload: the pooled buffer is reused on the next read.
+			payload := make([]byte, n)
+			copy(payload, buf[:n])
+
+			f.logger.Debug("received UDP response via SOCKS5",
+				zap.String("key", key),
+				zap.String("responder", responder.String()),
+				zap.Int("len", n),
+			)
+
+			reply(responder.IP, clientIP, responder.Port, clientPort, payload)
+		}
+	}()
 }
 
 // Close closes the relay pool.

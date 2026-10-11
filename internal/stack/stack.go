@@ -44,14 +44,24 @@ type UDPHandler interface {
 	HandleUDP(ctx context.Context, conn net.PacketConn, srcAddr, dstAddr net.Addr) error
 }
 
+// UDPReplyFunc delivers a UDP payload back to the local client through the
+// TUN device. responderIP/responderPort identify the actual responder (read
+// from the relay's datagram header), clientIP/clientPort the original local
+// sender. Implementations must be safe to call from any goroutine and must
+// not retain payload.
+type UDPReplyFunc func(responderIP, clientIP net.IP, responderPort, clientPort uint16, payload []byte)
+
 // RawUDPHandler handles raw UDP packets with payload
 type RawUDPHandler interface {
-	// HandleRawUDP forwards a UDP packet and returns the response
+	// HandleRawUDP forwards a UDP packet through the mesh.
 	// srcIP/srcPort: original source (client)
 	// dstIP/dstPort: destination to forward to
 	// payload: UDP payload data
-	// Returns response payload or error
-	HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte) ([]byte, error)
+	// reply: callback that delivers response datagrams back to the client;
+	// it may be invoked zero or more times, possibly after HandleRawUDP
+	// returns, once per received response datagram.
+	// Returns an error only if the packet could not be forwarded.
+	HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte, reply UDPReplyFunc) error
 }
 
 // ICMPHandler handles ICMP echo requests
@@ -111,6 +121,11 @@ type Stack struct {
 	udpSem  chan struct{}  // Limits concurrent UDP goroutines
 	icmpSem chan struct{}  // Limits concurrent ICMP goroutines
 	tcpWg   sync.WaitGroup // Tracks in-flight TCP handler goroutines
+
+	// runCtx is the daemon-scoped context captured by Run; UDP handler
+	// goroutines derive from it so daemon shutdown cancels them.
+	runCtxMu sync.RWMutex
+	runCtx   context.Context
 }
 
 const (
@@ -218,6 +233,10 @@ func New(tunDev tun.Device, cfg Config) (*Stack, error) {
 
 // Run starts the network stack and handles connections
 func (s *Stack) Run(ctx context.Context) error {
+	s.runCtxMu.Lock()
+	s.runCtx = ctx
+	s.runCtxMu.Unlock()
+
 	// Set up TCP forwarder
 	tcpForwarder := tcp.NewForwarder(s.stack, 0, 65535, func(r *tcp.ForwarderRequest) {
 		s.handleTCPForward(ctx, r)
@@ -242,7 +261,8 @@ func (s *Stack) Run(ctx context.Context) error {
 }
 
 // HandleUDPPacket implements UDPPacketHandler for the intercept endpoint.
-// parentCtx is set by Run() and used for shutdown propagation.
+// Response datagrams arrive asynchronously on the relay association and are
+// delivered back to the client through writeUDPResponse.
 func (s *Stack) HandleUDPPacket(srcIP, dstIP net.IP, srcPort, dstPort uint16, payload []byte) {
 	s.logger.Debug("UDP packet received for forwarding",
 		zap.String("src", fmt.Sprintf("%s:%d", srcIP, srcPort)),
@@ -265,40 +285,50 @@ func (s *Stack) HandleUDPPacket(srcIP, dstIP net.IP, srcPort, dstPort uint16, pa
 		return
 	}
 
-	// Forward through SOCKS5 in a goroutine to not block
+	// Forward through SOCKS5 in a goroutine to not block the dispatcher.
+	// HandleRawUDP returns once the datagram is sent; it never blocks waiting
+	// for a response.
 	go func() {
 		defer func() { <-s.udpSem }()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(s.runContext(), 30*time.Second)
 		defer cancel()
 
-		response, err := s.cfg.RawUDPHandler.HandleRawUDP(ctx, srcIP, dstIP, srcPort, dstPort, payload)
-		if err != nil {
+		if err := s.cfg.RawUDPHandler.HandleRawUDP(ctx, srcIP, dstIP, srcPort, dstPort, payload, s.writeUDPResponse); err != nil {
 			s.logger.Debug("UDP forward failed",
 				zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
 				zap.Error(err),
 			)
-			return
-		}
-
-		if len(response) == 0 {
-			return
-		}
-
-		// Build response packet: from dstIP:dstPort to srcIP:srcPort
-		responsePkt := BuildUDPResponse(dstIP, srcIP, dstPort, srcPort, response)
-
-		// Write response back to TUN
-		if _, err := s.tunDev.Write(responsePkt); err != nil {
-			s.logger.Error("failed to write UDP response to TUN",
-				zap.Error(err),
-			)
-		} else {
-			s.logger.Debug("UDP response written to TUN",
-				zap.Int("len", len(responsePkt)),
-			)
 		}
 	}()
+}
+
+// runContext returns the daemon-scoped context captured by Run, falling back
+// to context.Background() when Run has not started yet.
+func (s *Stack) runContext() context.Context {
+	s.runCtxMu.RLock()
+	defer s.runCtxMu.RUnlock()
+	if s.runCtx != nil {
+		return s.runCtx
+	}
+	return context.Background()
+}
+
+// writeUDPResponse synthesizes a UDP packet from responderIP:responderPort to
+// clientIP:clientPort and writes it to the TUN device. It implements
+// UDPReplyFunc.
+func (s *Stack) writeUDPResponse(responderIP, clientIP net.IP, responderPort, clientPort uint16, payload []byte) {
+	responsePkt := BuildUDPResponse(responderIP, clientIP, responderPort, clientPort, payload)
+
+	if _, err := s.tunDev.Write(responsePkt); err != nil {
+		s.logger.Error("failed to write UDP response to TUN",
+			zap.Error(err),
+		)
+		return
+	}
+	s.logger.Debug("UDP response written to TUN",
+		zap.Int("len", len(responsePkt)),
+	)
 }
 
 // HandleICMPPacket implements ICMPPacketHandler for the intercept endpoint

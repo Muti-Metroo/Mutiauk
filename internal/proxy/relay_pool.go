@@ -75,6 +75,25 @@ func (p *RelayPool) GetOrCreate(ctx context.Context, key string, create func(con
 	return relay, nil
 }
 
+// Remove evicts the relay for key and closes it, but only if the pooled
+// relay is the same instance - a newer relay may already have replaced it.
+func (p *RelayPool) Remove(key string, relay *socks5.UDPRelay) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	entry, ok := p.entries[key]
+	if !ok || entry.relay != relay {
+		return
+	}
+	if entry.relay != nil {
+		entry.relay.Close()
+	}
+	delete(p.entries, key)
+	if p.logger != nil {
+		p.logger.Debug("removed UDP relay", zap.String("key", key))
+	}
+}
+
 // Clear closes all relays and clears the pool.
 func (p *RelayPool) Clear() {
 	p.mu.Lock()
