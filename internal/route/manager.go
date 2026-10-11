@@ -43,11 +43,6 @@ func (m *Manager) SetStateFile(path string) {
 	m.state.SetPath(path)
 }
 
-// refreshLink refreshes the netlink reference (used internally and by tests).
-func (m *Manager) refreshLink() error {
-	return m.kernel.RefreshLink()
-}
-
 // Add adds a route to both the kernel and persistent state (idempotent).
 func (m *Manager) Add(r Route) error {
 	m.mu.Lock()

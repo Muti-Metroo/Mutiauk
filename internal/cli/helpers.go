@@ -7,14 +7,12 @@ import (
 	"io"
 	"io/fs"
 	"net"
-	"runtime"
 	"time"
 
 	"github.com/postalsys/mutiauk/internal/api"
 	"github.com/postalsys/mutiauk/internal/config"
 	"github.com/postalsys/mutiauk/internal/daemon"
 	"github.com/postalsys/mutiauk/internal/route"
-	"github.com/postalsys/mutiauk/internal/service"
 )
 
 // emitJSON writes v to w as 2-space-indented JSON. Centralised so
@@ -23,20 +21,6 @@ func emitJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
-}
-
-// requireLinuxRoot returns nil iff the binary is running on Linux as
-// root. The action argument is a noun ("install", "cleanup",
-// "uninstall") used in the error message so operators get a hint
-// pointing at the failing subcommand.
-func requireLinuxRoot(action string) error {
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("%s is only supported on Linux", action)
-	}
-	if !service.IsRoot() {
-		return fmt.Errorf("%s requires root (try: sudo mutiauk ...)", action)
-	}
-	return nil
 }
 
 // formatTimestamp renders a time.Time in the project's standard

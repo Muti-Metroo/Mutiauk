@@ -15,7 +15,6 @@ import (
 type mockRouteWatchServer struct {
 	ln        net.Listener
 	replyCode byte
-	wantCmd   byte
 	gotCmd    chan byte
 	stream    func(conn net.Conn)
 }

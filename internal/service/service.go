@@ -5,6 +5,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -62,7 +63,7 @@ func Supported() bool { return supportedOS() }
 // Requires root privileges.
 func Install(cfg ServiceConfig) error {
 	if !supportedOS() {
-		return fmt.Errorf(errUnsupportedOS)
+		return errors.New(errUnsupportedOS)
 	}
 
 	if !IsRoot() {
@@ -88,7 +89,7 @@ func Install(cfg ServiceConfig) error {
 // Requires root privileges.
 func Uninstall(serviceName string) error {
 	if !supportedOS() {
-		return fmt.Errorf(errUnsupportedOS)
+		return errors.New(errUnsupportedOS)
 	}
 
 	if !IsRoot() {
@@ -101,7 +102,7 @@ func Uninstall(serviceName string) error {
 // Status returns the current status of the service.
 func Status(serviceName string) (string, error) {
 	if !supportedOS() {
-		return "", fmt.Errorf(errUnsupportedOS)
+		return "", errors.New(errUnsupportedOS)
 	}
 
 	return statusImpl(serviceName)
@@ -126,7 +127,7 @@ type StatusInfo struct {
 // usual platform error.
 func StatusDetailed(serviceName string) (StatusInfo, error) {
 	if !supportedOS() {
-		return StatusInfo{}, fmt.Errorf(errUnsupportedOS)
+		return StatusInfo{}, errors.New(errUnsupportedOS)
 	}
 	return statusDetailedImpl(serviceName)
 }
