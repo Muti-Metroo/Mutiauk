@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"runtime"
 
 	"github.com/postalsys/mutiauk/internal/config"
 	meshdns "github.com/postalsys/mutiauk/internal/dns"
@@ -27,6 +26,8 @@ func newCleanupCmd() *cobra.Command {
 		Long: `Reset the host to a clean state after a crash or unclean shutdown.
 
 Removes:
+  - Stale host-DNS integration state (resolvectl per-link config,
+    nm-dnsmasq drop-in, macOS /etc/resolver files, Windows NRPT rules)
   - The TUN interface (also clears associated kernel routes)
   - The PID file (if stale)
   - The API Unix socket (if stale)
@@ -79,15 +80,10 @@ func runCleanup(cfg *config.Config, purge, dryRun bool) {
 
 // revertDNSIntegrations clears any host-DNS state the daemon may have
 // installed (systemd-resolved per-link config, NetworkManager dnsmasq
-// drop-in). Best-effort across all known backends; missing tooling
-// or pristine state each surface as "skipped" rather than an error.
+// drop-in, macOS /etc/resolver files, Windows NRPT rules). Best-effort
+// across all known backends; missing tooling or pristine state each
+// surface as "skipped" rather than an error.
 func revertDNSIntegrations(iface string, dryRun bool) {
-	// RevertAll is a no-op where no backend applies, but the root/admin
-	// gate and messaging only make sense on platforms with a real host
-	// integration (Linux resolvectl/nm-dnsmasq, Windows NRPT).
-	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
-		return
-	}
 	if !service.IsRoot() {
 		fmt.Println("DNS integration revert: skipped (requires elevated privileges)")
 		return

@@ -229,7 +229,7 @@ Top-level subcommands (registered in `internal/cli/root.go`):
 - `admin` - Print the admin dashboard login URL (carries the token from the 0600 `admin-token` file as `?token=`, which the daemon exchanges for a session cookie).
 - `service` - `install`, `uninstall`, `status` (with `--json` returning `{installed, active, enabled, sub_state}`).
 - `config` - `check` (validate the file; `--strict`, `--json` for CI gating); `generate` (non-interactive config generation for Ansible/Salt/cloud-init: layers `wizard.BuildBaselineConfig()` defaults < `--from <answers.yaml>` < per-field flags (`--tun-name`, `--socks5-server`, `--autoroutes-url`, ...), validates, writes at mode 0600. Flags: `--from`, `--output`/`-o`, `--force`, `--json`. Secrets come from `MUTI_METROO_TOKEN` / `MUTIAUK_SOCKS5_PASSWORD` env vars; never written to the answers file or command line. Service install is left to `service install`).
-- `cleanup` - Reset host state after crash; `--dry-run` previews actions, `--purge` also removes the route state file.
+- `cleanup` - Reset host state after crash (TUN interface, stale PID file/socket, and all host-DNS integration state via `dns.RevertAll` - including macOS /etc/resolver files); `--dry-run` previews actions, `--purge` also removes the route state file.
 - `completion` - Emit shell-completion for `bash|zsh|fish|powershell`.
 - `version` - Print version, git commit, build date.
 

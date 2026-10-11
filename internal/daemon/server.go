@@ -220,6 +220,14 @@ func (s *Server) startServices(ctx context.Context) {
 		s.logger.Warn("failed to apply some routes", zap.Error(err))
 	}
 
+	// Clear any stale host-DNS state (macOS /etc/resolver files, NM
+	// dnsmasq drop-ins, Windows NRPT rules) left by a prior unclean
+	// shutdown. This runs regardless of whether autoroutes is enabled
+	// now: the previous run may have had it enabled, and stale resolver
+	// files pointing at a dead TUN IP cause DNS timeouts for those TLDs.
+	// RevertAll is idempotent and best-effort; failures are only logged.
+	meshdns.RevertAll(s.ifaceName(), s.logger)
+
 	if cfg.AutoRoutes.Enabled {
 		if err := s.startDNS(ctx); err != nil {
 			s.logger.Warn("failed to start DNS server", zap.Error(err))
@@ -481,11 +489,6 @@ func (s *Server) startDNS(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("dns listen address %q: %w", addr, err)
 	}
-
-	// Clear any state left over from a prior unclean shutdown before
-	// the integration's first Apply. RevertAll is idempotent and
-	// best-effort; failures are logged but don't fail startup.
-	meshdns.RevertAll(s.ifaceName(), s.logger)
 
 	integration, err := meshdns.DetectIntegration(cfg.DNSIntegration, s.ifaceName(), listenIP, s.logger)
 	if err != nil {
