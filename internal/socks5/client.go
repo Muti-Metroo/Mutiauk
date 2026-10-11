@@ -247,13 +247,13 @@ func (c *Client) DialServer(ctx context.Context) (net.Conn, error) {
 func (c *Client) dialServer(ctx context.Context) (net.Conn, error) {
 	// Check if server address is a WebSocket URL
 	if c.isWebSocketURL() {
-		return dialWebSocket(ctx, c.ServerAddr, c.Timeout, c.WSUsername, c.WSPassword)
+		return dialWebSocket(ctx, c.ServerAddr, c.Timeout, c.KeepAlive, c.WSUsername, c.WSPassword)
 	}
 
 	// Use explicit transport setting
 	if c.Transport == TransportWebSocket {
 		wsURL := c.buildWebSocketURL()
-		return dialWebSocket(ctx, wsURL, c.Timeout, c.WSUsername, c.WSPassword)
+		return dialWebSocket(ctx, wsURL, c.Timeout, c.KeepAlive, c.WSUsername, c.WSPassword)
 	}
 
 	// Default: TCP connection

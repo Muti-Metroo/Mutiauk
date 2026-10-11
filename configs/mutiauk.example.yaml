@@ -43,14 +43,23 @@ socks5:
   # idle timeout; KeepAlive (below) controls liveness on idle TCP
   # sessions.
   timeout: 30s
-  # TCP keepalive interval. Sent on each idle SOCKS5-tunneled TCP
-  # session to detect dead peers and to keep NAT/firewall state warm.
+  # Keepalive interval. With transport "tcp" this is the TCP keepalive
+  # interval on each SOCKS5-tunneled session; with "websocket" it is the
+  # WebSocket ping interval. Both detect dead peers and keep NAT/firewall
+  # state warm on idle connections.
   keepalive: 60s
   # Transport type: "tcp" (default) or "websocket".
   # Use "websocket" to tunnel SOCKS5 over WebSocket when raw TCP is
   # blocked. Precedence: if `server` starts with `ws://` or `wss://`,
   # transport is auto-detected from the URL scheme and this explicit
   # value is ignored.
+  #
+  # WARNING: the WebSocket transport carries TCP and ICMP only. The UDP
+  # data plane (UDP ASSOCIATE) ALWAYS uses a raw UDP socket to the agent
+  # (`server` host), even when transport is "websocket". If the agent is
+  # reachable only via WebSocket (e.g. behind a CDN or a TCP-only
+  # proxy), UDP traffic - including DNS through the tunnel - will not
+  # work. UDP-over-WebSocket framing is not implemented.
   transport: tcp
   # WebSocket path (default: "/socks5")
   # Only used when transport is "websocket" and server is not a full URL

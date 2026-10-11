@@ -204,7 +204,7 @@ Config file: YAML format, see `configs/mutiauk.example.yaml`
 Key sections:
 - `daemon`: PID file, API socket path, optional health port, `status_probe_target` (host:port that `mutiauk status` opens through the SOCKS5 tunnel; default `example.com:80`, override for air-gapped networks)
 - `tun`: Interface name, MTU (default 1400), IPv4/IPv6 addresses
-- `socks5`: Proxy server, auth credentials (password also via `MUTIAUK_SOCKS5_PASSWORD` env), timeouts, transport (tcp/websocket; auto-detected from `ws://`/`wss://` scheme)
+- `socks5`: Proxy server, auth credentials (password also via `MUTIAUK_SOCKS5_PASSWORD` env), timeouts, transport (tcp/websocket; auto-detected from `ws://`/`wss://` scheme). `keepalive` drives both TCP keepalive (tcp transport) and periodic WebSocket pings (websocket transport). WARNING: the WebSocket transport carries TCP/ICMP only; the UDP data plane always uses a raw UDP socket to the agent, so UDP (including tunneled DNS) breaks if the agent is reachable only via WebSocket
 - `routes`: Static CIDR destinations to forward through the proxy. `enabled` defaults to `true` when the YAML omits the key; the daemon emits a per-route WARN at startup so legacy configs surface in journald
 - `autoroutes`: Route/host state from a Muti Metroo agent (`source` auto|socks|dashboard; SOCKS route-watch by default, optional HTTP `url`/`token`/`MUTI_METROO_TOKEN` fallback, `poll_interval`); also gates the local DNS resolver
 - `dns_integration`: `auto` (default), `resolvectl`, `nm-dnsmasq`, `etc-resolver` (macOS), `nrpt` (Windows), or `none`

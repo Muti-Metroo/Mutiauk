@@ -245,7 +245,7 @@ func TestDialWebSocket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, err := dialWebSocket(ctx, srv.URL(), 5*time.Second, "", "")
+	conn, err := dialWebSocket(ctx, srv.URL(), 5*time.Second, 0, "", "")
 	if err != nil {
 		t.Fatalf("dialWebSocket() error = %v", err)
 	}
@@ -341,7 +341,7 @@ func TestWsConnSetDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, err := dialWebSocket(ctx, srv.URL(), 5*time.Second, "", "")
+	conn, err := dialWebSocket(ctx, srv.URL(), 5*time.Second, 0, "", "")
 	if err != nil {
 		t.Fatalf("dialWebSocket() error = %v", err)
 	}
@@ -373,7 +373,7 @@ func TestDialWebSocketTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := dialWebSocket(ctx, "ws://192.0.2.1:12345/socks5", 100*time.Millisecond, "", "")
+	_, err := dialWebSocket(ctx, "ws://192.0.2.1:12345/socks5", 100*time.Millisecond, 0, "", "")
 	if err == nil {
 		t.Error("expected timeout error")
 	}
@@ -383,7 +383,7 @@ func TestDialWebSocketInvalidURL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	_, err := dialWebSocket(ctx, "not-a-url", time.Second, "", "")
+	_, err := dialWebSocket(ctx, "not-a-url", time.Second, 0, "", "")
 	if err == nil {
 		t.Error("expected error for invalid URL")
 	}
@@ -455,7 +455,7 @@ func TestDialWebSocketWithHTTPBasicAuth(t *testing.T) {
 	defer cancel()
 
 	// Test with correct credentials
-	conn, err := dialWebSocket(ctx, srv.URL(), 5*time.Second, "testuser", "testpass")
+	conn, err := dialWebSocket(ctx, srv.URL(), 5*time.Second, 0, "testuser", "testpass")
 	if err != nil {
 		t.Fatalf("dialWebSocket() with correct credentials error = %v", err)
 	}
@@ -470,7 +470,7 @@ func TestDialWebSocketWithHTTPBasicAuthWrongCredentials(t *testing.T) {
 	defer cancel()
 
 	// Test with wrong credentials
-	_, err := dialWebSocket(ctx, srv.URL(), 5*time.Second, "wrong", "wrong")
+	_, err := dialWebSocket(ctx, srv.URL(), 5*time.Second, 0, "wrong", "wrong")
 	if err == nil {
 		t.Error("expected error for wrong credentials")
 	}
@@ -484,7 +484,7 @@ func TestDialWebSocketWithHTTPBasicAuthNoCredentials(t *testing.T) {
 	defer cancel()
 
 	// Test with no credentials (server requires them)
-	_, err := dialWebSocket(ctx, srv.URL(), 5*time.Second, "", "")
+	_, err := dialWebSocket(ctx, srv.URL(), 5*time.Second, 0, "", "")
 	if err == nil {
 		t.Error("expected error for missing credentials")
 	}
@@ -720,5 +720,154 @@ func TestClientConnectWithWrongHTTPBasicAuth(t *testing.T) {
 	_, err := client.Connect(ctx, "example.com:80")
 	if err == nil {
 		t.Error("expected error for wrong HTTP Basic Auth credentials")
+	}
+}
+
+// wsTestServer runs handler on an accepted WebSocket connection.
+func wsTestServer(t *testing.T, handler func(*websocket.Conn)) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/socks5", func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			Subprotocols: []string{"socks5"},
+		})
+		if err != nil {
+			t.Logf("websocket accept error: %v", err)
+			return
+		}
+		defer c.Close(websocket.StatusNormalClosure, "")
+		handler(c)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestWsConnReadSkipsEmptyMessages is the regression guard for Read
+// returning (0, nil) on a zero-length binary message, which violates the
+// io.Reader contract and spins io.Copy. Empty messages must be skipped
+// transparently.
+func TestWsConnReadSkipsEmptyMessages(t *testing.T) {
+	srv := wsTestServer(t, func(c *websocket.Conn) {
+		ctx := context.Background()
+		// Two empty binary messages, then a real payload.
+		if err := c.Write(ctx, websocket.MessageBinary, nil); err != nil {
+			return
+		}
+		if err := c.Write(ctx, websocket.MessageBinary, []byte{}); err != nil {
+			return
+		}
+		if err := c.Write(ctx, websocket.MessageBinary, []byte("payload")); err != nil {
+			return
+		}
+		// Keep the connection open until the client goes away.
+		_, _, _ = c.Read(ctx)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := dialWebSocket(ctx, "ws"+srv.URL[4:]+"/socks5", 5*time.Second, 0, "", "")
+	if err != nil {
+		t.Fatalf("dialWebSocket() error = %v", err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 64)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if n == 0 {
+		t.Fatal("Read() returned (0, nil) for empty messages")
+	}
+	if string(buf[:n]) != "payload" {
+		t.Errorf("Read() = %q, want %q", buf[:n], "payload")
+	}
+}
+
+// TestWsConnSetDeadlineInterruptsInFlightRead verifies that replacing the
+// deadline cancels the context of a Read that is already blocked, instead
+// of only affecting later operations.
+func TestWsConnSetDeadlineInterruptsInFlightRead(t *testing.T) {
+	// Server that never sends anything.
+	release := make(chan struct{})
+	srv := wsTestServer(t, func(c *websocket.Conn) {
+		<-release
+	})
+	defer close(release)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := dialWebSocket(ctx, "ws"+srv.URL[4:]+"/socks5", 5*time.Second, 0, "", "")
+	if err != nil {
+		t.Fatalf("dialWebSocket() error = %v", err)
+	}
+	defer conn.Close()
+
+	readErr := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 64)
+		_, err := conn.Read(buf)
+		readErr <- err
+	}()
+
+	// Give the read a moment to block, then tighten the deadline to now.
+	time.Sleep(100 * time.Millisecond)
+	if err := conn.SetDeadline(time.Now()); err != nil {
+		t.Fatalf("SetDeadline() error = %v", err)
+	}
+
+	select {
+	case err := <-readErr:
+		if err == nil {
+			t.Error("Read() returned nil error after deadline interruption")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("SetDeadline did not interrupt the in-flight Read")
+	}
+}
+
+// TestWsConnPingKeepAlive verifies that a connection dialed with a
+// keepalive interval stays usable past several ping intervals (the test
+// server auto-answers pings) and that the ping goroutine does not
+// interfere with the data path.
+func TestWsConnPingKeepAlive(t *testing.T) {
+	srv := wsTestServer(t, func(c *websocket.Conn) {
+		ctx := context.Background()
+		for {
+			_, data, err := c.Read(ctx)
+			if err != nil {
+				return
+			}
+			if err := c.Write(ctx, websocket.MessageBinary, data); err != nil {
+				return
+			}
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := dialWebSocket(ctx, "ws"+srv.URL[4:]+"/socks5", 5*time.Second, 50*time.Millisecond, "", "")
+	if err != nil {
+		t.Fatalf("dialWebSocket() error = %v", err)
+	}
+	defer conn.Close()
+
+	// Let several ping intervals elapse on the idle connection.
+	time.Sleep(200 * time.Millisecond)
+
+	if _, err := conn.Write([]byte("still alive")); err != nil {
+		t.Fatalf("Write() after keepalive pings error = %v", err)
+	}
+	buf := make([]byte, 64)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("Read() after keepalive pings error = %v", err)
+	}
+	if string(buf[:n]) != "still alive" {
+		t.Errorf("Read() = %q, want %q", buf[:n], "still alive")
 	}
 }
