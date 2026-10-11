@@ -11,9 +11,15 @@ Mutiauk is a TUN-based SOCKS5 proxy agent for Linux, macOS, and Windows. It crea
 ## Build Commands
 
 ```bash
-# Build per platform (all use GOTOOLCHAIN=go1.25.5 under the hood)
+# NOTE: the vendored gVisor does not compile under Go 1.26. The Makefile
+# pins GOTOOLCHAIN=go1.25.5 for the darwin/windows cross-compile targets
+# only; on a host whose default Go is 1.26+, prefix local builds and tests
+# the same way:
+export GOTOOLCHAIN=go1.25.5
+
+# Build per platform
 make build-linux          # linux/amd64
-make build-darwin         # darwin/arm64
+make build-darwin         # darwin/arm64 (pins GOTOOLCHAIN itself)
 make build-windows-arm64  # windows/arm64 (embeds Wintun DLL)
 make build-all            # every supported target
 
@@ -236,25 +242,33 @@ Edit documentation in the Muti Metroo docs directory.
 
 ## Releasing
 
-Releases are managed manually via `release.sh`. The script bumps the version, builds Linux binaries, creates a GitHub release, and uploads assets.
+Releases are driven by release-please (`.github/workflows/release-please.yml`).
+Commits on master use Conventional Commits; `fix:`/`feat:` commits make
+release-please propose a patch/minor release PR. Merging that PR tags the
+release, bumps `CHANGELOG.md`, `VERSION`, and the manifest pin, and the
+workflow builds and uploads the Linux amd64/arm64 binaries + checksums.
 
-### Prerequisites
+`release.sh` remains as a manual alternative for ad-hoc full releases (all
+six targets, run from a maintainer machine). Do not use it for routine
+releases.
+
+### Manual release via release.sh
+
+Prerequisites:
 
 - `GITHUB_TOKEN` environment variable set with a GitHub API token
 - `docker`, `jq`, `curl` installed
 - Builds run inside `golang:1.25` Docker image (gVisor requires Linux + matching Go toolchain)
 - UPX compression is installed automatically inside the build container
 
-### Release Process
-
 ```bash
-# Patch release (default): 0.2.16 -> 0.2.17
+# Patch release (default): 0.5.1 -> 0.5.2
 ./release.sh
 
-# Minor release: 0.2.16 -> 0.3.0
+# Minor release: 0.5.1 -> 0.6.0
 ./release.sh minor
 
-# Major release: 0.2.16 -> 1.0.0
+# Major release: 0.5.1 -> 1.0.0
 ./release.sh major
 ```
 
