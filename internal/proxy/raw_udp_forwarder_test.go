@@ -446,6 +446,61 @@ func TestRawUDPForwarder_OneWayTrafficDoesNotBlock(t *testing.T) {
 	}
 }
 
+func TestRawUDPForwarder_DeadRelayEvicted(t *testing.T) {
+	server := newMockUDPSOCKS5Server(t)
+	fwd := newTestRawUDPForwarder(t, server)
+	replies, replyFn := newReplyCollector()
+
+	ctx := context.Background()
+	if err := fwd.HandleRawUDP(ctx, testClientIP, net.ParseIP("8.8.8.8"), testClientPort, 53, []byte("query-1"), replyFn); err != nil {
+		t.Fatalf("HandleRawUDP failed: %v", err)
+	}
+	server.nextDatagram(t)
+
+	if n := server.associateCount(); n != 1 {
+		t.Fatalf("associations = %d, want 1", n)
+	}
+
+	// The agent dies: the server closes the association's control connection.
+	// The relay must be evicted from the pool without waiting for the TTL.
+	server.closeControlConns()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		fwd.relayPool.mu.Lock()
+		remaining := len(fwd.relayPool.entries)
+		fwd.relayPool.mu.Unlock()
+		if remaining == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("dead relay was not evicted after control connection closed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The next packet must create a fresh association and be delivered.
+	if err := fwd.HandleRawUDP(ctx, testClientIP, net.ParseIP("8.8.8.8"), testClientPort, 53, []byte("query-2"), replyFn); err != nil {
+		t.Fatalf("HandleRawUDP after eviction failed: %v", err)
+	}
+
+	if n := server.associateCount(); n != 2 {
+		t.Fatalf("associations = %d, want 2 (fresh association after eviction)", n)
+	}
+
+	dg := server.nextDatagram(t)
+	if string(dg.payload) != "query-2" {
+		t.Fatalf("payload = %q, want %q", dg.payload, "query-2")
+	}
+
+	// The fresh association must be fully functional.
+	server.respond(t, dg.clientAddr, "8.8.8.8", 53, []byte("answer-2"))
+	r := nextReply(t, replies)
+	if string(r.payload) != "answer-2" {
+		t.Errorf("payload = %q, want %q", r.payload, "answer-2")
+	}
+}
+
 func TestRawUDPForwarder_NoClient(t *testing.T) {
 	fwd := NewRawUDPForwarder(nil, zap.NewNop())
 	defer fwd.Close()

@@ -71,6 +71,16 @@ func (f *RawUDPForwarder) HandleRawUDP(ctx context.Context, srcIP, dstIP net.IP,
 			zap.String("relay_addr", r.RemoteAddr()),
 		)
 		f.startRelayReader(key, r, srcIP, srcPort, reply)
+		// The SOCKS5 server closes the control connection when the UDP
+		// association dies (e.g. agent restart); evict the dead relay so the
+		// next packet creates a fresh association instead of sending into
+		// the void until the TTL expires.
+		r.MonitorControlConn(func() {
+			f.logger.Debug("UDP relay control connection closed, evicting relay",
+				zap.String("key", key),
+			)
+			f.relayPool.Remove(key, r)
+		})
 		return r, nil
 	})
 	if err != nil {

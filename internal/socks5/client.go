@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -452,6 +453,30 @@ type UDPRelay struct {
 	controlConn net.Conn     // TCP connection to keep UDP association alive
 	relayConn   *net.UDPConn // UDP connection to relay
 	relayAddr   *Address     // Address of the relay
+	monitorOnce sync.Once    // Guards MonitorControlConn
+}
+
+// MonitorControlConn starts a goroutine that invokes onClose when the
+// relay's control connection terminates (EOF or read error). Per RFC 1928 a
+// UDP association ends when its TCP control connection closes, so onClose is
+// the signal that the association is dead and must be torn down. The callback
+// also fires when the relay is closed locally via Close. Only the first call
+// to MonitorControlConn has any effect.
+func (r *UDPRelay) MonitorControlConn(onClose func()) {
+	r.monitorOnce.Do(func() {
+		go func() {
+			// A SOCKS5 server never sends data on the control connection;
+			// any read result other than a blocking wait means the
+			// association is gone.
+			buf := make([]byte, 256)
+			for {
+				if _, err := r.controlConn.Read(buf); err != nil {
+					onClose()
+					return
+				}
+			}
+		}()
+	})
 }
 
 // Send sends a UDP datagram through the relay
@@ -532,8 +557,13 @@ func (r *UDPRelay) SetReadDeadline(t time.Time) error {
 
 // Close closes the UDP relay
 func (r *UDPRelay) Close() error {
-	r.relayConn.Close()
-	return r.controlConn.Close()
+	if r.relayConn != nil {
+		r.relayConn.Close()
+	}
+	if r.controlConn != nil {
+		return r.controlConn.Close()
+	}
+	return nil
 }
 
 // ICMPRelay handles ICMP echo relay through SOCKS5.

@@ -62,7 +62,9 @@ func (p *RelayPool) GetOrCreate(ctx context.Context, key string, create func(con
 
 	if entry, ok := p.entries[key]; ok {
 		// Another goroutine created it while we were doing I/O; close ours
-		relay.Close()
+		if relay != nil {
+			relay.Close()
+		}
 		entry.lastUsed = time.Now()
 		return entry.relay, nil
 	}
