@@ -227,10 +227,10 @@ path, not on a notify socket.
   `service/service_other.go`.
 - **Makefile:** add `build-darwin` (`GOTOOLCHAIN=go1.25.5 GOOS=darwin
   GOARCH=arm64 go build`) and an `amd64` variant.
-- **release.sh:** add `darwin/arm64` + `darwin/amd64` targets. Pure-Go +
-  `x/sys` syscalls, no cgo -> cross-compiles cleanly from the `golang:1.25`
-  Docker image (`CGO_ENABLED=0`). UPX supports Mach-O but is optional; consider
-  skipping UPX for darwin (Gatekeeper friction).
+- **Release builds:** pure-Go + `x/sys` syscalls, no cgo -> cross-compiles
+  cleanly with `CGO_ENABLED=0`. The release-please workflow ships Linux only;
+  darwin binaries are built from source with the Makefile targets above. If
+  darwin is ever added to the release matrix, skip UPX (Gatekeeper friction).
 - **CLI copy:** `root.go`/help text and the "Linux only" wording in
   `service.go`, `cleanup.go`, status output should say "Linux/macOS".
 - **Signing/notarization:** not required for utun-as-root or CLI use. Flag as a

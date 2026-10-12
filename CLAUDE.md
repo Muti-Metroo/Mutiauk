@@ -246,40 +246,10 @@ Edit documentation in the Muti Metroo docs directory.
 Releases are driven by release-please (`.github/workflows/release-please.yml`).
 Commits on master use Conventional Commits; `fix:`/`feat:` commits make
 release-please propose a patch/minor release PR. Merging that PR tags the
-release, bumps `CHANGELOG.md`, `VERSION`, and the manifest pin, and the
+release, bumps `CHANGELOG.md` and the manifest pin, and the
 workflow builds and uploads the Linux amd64/arm64 binaries + checksums.
 
-`release.sh` remains as a manual alternative for ad-hoc full releases (all
-six targets, run from a maintainer machine). Do not use it for routine
-releases.
-
-### Manual release via release.sh
-
-Prerequisites:
-
-- `GITHUB_TOKEN` environment variable set with a GitHub API token
-- `docker`, `jq`, `curl` installed
-- Builds run inside `golang:1.25` Docker image (gVisor requires Linux + matching Go toolchain)
-- UPX compression is installed automatically inside the build container
-
-```bash
-# Patch release (default): 0.5.1 -> 0.5.2
-./release.sh
-
-# Minor release: 0.5.1 -> 0.6.0
-./release.sh minor
-
-# Major release: 0.5.1 -> 1.0.0
-./release.sh major
-```
-
-The script will:
-1. Bump version in `VERSION` file
-2. Cross-compile Linux binaries (amd64 + arm64) inside Docker
-3. Compress with UPX
-4. Generate SHA256 checksums
-5. Commit version bump, create git tag, push
-6. Create GitHub release and upload assets
+Never tag or create releases by hand.
 
 ### Manual Testing
 

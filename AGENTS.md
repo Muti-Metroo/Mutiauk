@@ -46,8 +46,6 @@ Administrator.
 - `internal/config/`, `internal/service/`, `internal/wizard/` - config
   load/validate, service install, interactive setup
 - `configs/` - example YAML configs; `test/` - Docker test rigs and load tests
-- `VERSION` - single source of truth for the release version (bumped by
-  release-please, consumed by `release.sh`)
 
 Platform-specific code lives in `_linux.go` / `_darwin.go` / `_windows.go` /
 `_stub.go` files behind shared interfaces.
@@ -91,12 +89,10 @@ config in `.github/release-please-config.json`, manifest pin in
   `test:`/`refactor:` do not. `fix(deps):` counts as `fix:` and triggers a
   patch release proposal.
 - release-please opens/updates a release PR; merging it tags the release,
-  updates `CHANGELOG.md`, `VERSION`, and the manifest pin, and the workflow
+  updates `CHANGELOG.md` and the manifest pin, and the workflow
   builds and uploads Linux amd64/arm64 binaries + checksums to the GitHub
   release.
-- `release.sh` is a manual alternative (bumps `VERSION`, cross-compiles all
-  six targets in Docker, creates the GitHub release via the API; needs
-  `GITHUB_TOKEN`). Do not run it for routine releases.
+- Never tag or create releases by hand.
 
 ## Branding and writing rules
 

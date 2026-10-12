@@ -15,7 +15,7 @@ Implementation checklist (all done):
 - [x] Daemon lifecycle - `cli/daemon_run_windows.go` (svc.Run; SCM stop -> graceful drain)
 - [x] Control plane - named-pipe IPC + `daemon.reload`/`daemon.stop`/`daemon.ping` API methods
 - [x] Per-OS paths - `config/paths_windows.go`, `route/paths_windows.go` (%ProgramData%, named pipe)
-- [x] Build - `make build-windows` / `build-windows-arm64`; `release.sh` windows matrix (no UPX)
+- [x] Build - `make build-windows` / `build-windows-arm64`; built from source (the release workflow ships Linux only)
 
 Autoroutes and expose required no Windows-specific code: they ride on the
 route, DNS, and websocket layers, all of which are platform-neutral.
@@ -118,9 +118,9 @@ NRPT was added (`nrpt_{windows,other}.go`). The `tun`/`stack`/`route`
 ## Build and release
 
 `make build-windows` / `build-windows-arm64` (GOTOOLCHAIN=go1.25.5, same
-gVisor constraint as macOS). `release.sh` builds `windows/{amd64,arm64}`
-and ships them **uncompressed** (UPX-packed Windows binaries are routinely
-flagged by antivirus). `make deploy-windows-test` scps the arm64 binary to
+gVisor constraint as macOS). The release-please workflow ships Linux only,
+so Windows binaries are built from source. Leave them **uncompressed**
+(UPX-packed Windows binaries are routinely flagged by antivirus). `make deploy-windows-test` scps the arm64 binary to
 the test host.
 
 ## Windows route-management fix (found during data-flow testing)
