@@ -27,7 +27,7 @@ services:
   # Muti Metroo Exit Agent - on target network to reach echo-server
   mm-exit:
     build:
-      context: ../../../Muti Metroo
+      context: ../../../Muti-Metroo
       dockerfile: Dockerfile
     container_name: loadtest-mm-exit
     hostname: mm-exit
@@ -43,7 +43,7 @@ services:
   # Muti Metroo Ingress Agent - on client network for kali
   mm-ingress:
     build:
-      context: ../../../Muti Metroo
+      context: ../../../Muti-Metroo
       dockerfile: Dockerfile
     container_name: loadtest-mm-ingress
     hostname: mm-ingress

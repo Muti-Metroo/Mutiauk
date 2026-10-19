@@ -1,7 +1,7 @@
 services:
   muti-metroo-agent:
     build:
-      context: ../../../Muti Metroo
+      context: ../../../Muti-Metroo
       dockerfile: Dockerfile
     command: ["run", "-c", "/etc/muti-metroo/config.yaml"]
     volumes:
@@ -11,7 +11,7 @@ services:
 
   muti-metroo-agent2:
     build:
-      context: ../../../Muti Metroo
+      context: ../../../Muti-Metroo
       dockerfile: Dockerfile
     command: ["run", "-c", "/etc/muti-metroo/config.yaml"]
     volumes:
