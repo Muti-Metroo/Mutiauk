@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.6](https://github.com/Muti-Metroo/Mutiauk/compare/mutiauk-v0.5.5...mutiauk-v0.5.6) (2026-10-19)
+
+
+### Features
+
+* carry UDP on the SOCKS5 connection and ship macOS and Windows releases ([3365887](https://github.com/Muti-Metroo/Mutiauk/commit/3365887aa189646e731c3378710db4a25dd712b1))
+
 ## [0.5.5](https://github.com/Muti-Metroo/Mutiauk/compare/mutiauk-v0.5.4...mutiauk-v0.5.5) (2026-10-11)
 
 
