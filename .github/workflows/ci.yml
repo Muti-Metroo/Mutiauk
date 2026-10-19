@@ -72,3 +72,30 @@ jobs:
         run: |
           go build ./...
           go vet ./...
+
+  # TCP, UDP, and ICMP through the TUN against real Muti Metroo agents built
+  # from the agent's master branch (test/tun-e2e).
+  tun-e2e:
+    name: TUN end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: Mutiauk
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Muti-Metroo/Muti-Metroo
+          ref: master
+          path: Muti-Metroo
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache-dependency-path: |
+            Mutiauk/go.sum
+            Muti-Metroo/go.sum
+
+      - name: Run TUN end-to-end test
+        run: Mutiauk/test/tun-e2e/run.sh

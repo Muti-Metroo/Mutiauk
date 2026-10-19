@@ -192,7 +192,7 @@ type Handler interface {
   - Windows: embedded Wintun driver (raw IP), iphlpapi routes via winipcfg, the Service Control Manager, NRPT DNS. The control plane is a named pipe (not a Unix socket); paths default under `%ProgramData%\Mutiauk`. See `WINDOWS_SUPPORT_PLAN.md`.
 - **Elevated privileges required**: TUN creation and route manipulation need root (CAP_NET_ADMIN) on Unix or Administrator on Windows.
 - **Control plane**: `daemon reload`/`stop` prefer the API socket/pipe on all platforms (the `daemon.reload`/`daemon.stop`/`daemon.ping` methods); Unix signals (SIGHUP/SIGTERM) remain a Linux/macOS fallback. Windows has no signals.
-- **gVisor dependency**: Uses `gvisor.dev/gvisor/pkg/tcpip` (the `go` branch) for userspace networking. gVisor follows the latest Go release and does not compile on older ones, so updating it can raise the `go` line in go.mod; CI and releases use the latest patch of that Go version. `make tun-e2e` (test/tun-e2e) checks TCP, UDP, and ICMP through the TUN against real Muti Metroo agents, over plain SOCKS5 and WebSocket.
+- **gVisor dependency**: Uses `gvisor.dev/gvisor/pkg/tcpip` (the `go` branch) for userspace networking. gVisor follows the latest Go release and does not compile on older ones, so updating it can raise the `go` line in go.mod; CI and releases use the latest patch of that Go version. `make tun-e2e` (test/tun-e2e) checks TCP, UDP, and ICMP through the TUN against real Muti Metroo agents, over plain SOCKS5 and WebSocket; CI runs it against the agent's master branch.
 
 ## Configuration
 
