@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Mutiauk is a TUN-based SOCKS5 proxy agent for Linux, macOS, and Windows. It creates a virtual network interface (TUN) and routes selected TCP/UDP/ICMP traffic through a SOCKS5 proxy using Google's gVisor userspace TCP/IP stack. The project is a single Go binary with two modes: daemon (traffic forwarding) and CLI (route management, host integration, diagnostics). The TUN backend is per-OS: `/dev/net/tun` on Linux, utun on macOS, and the embedded Wintun driver on Windows.
+Mutiauk is a TUN-based SOCKS5 proxy agent for Linux, macOS, and Windows, and the operator-side component of the Muti Metroo suite: `muti-metroo` agents run on the mesh nodes, and Mutiauk on the operator's workstation is the primary entry point into the mesh, forwarding traffic into an ingress agent's SOCKS5 listener (usually on a remote mesh node, ideally via `wss://`) and receiving routes, mesh hosts, and DNS suffixes over it. Document it as part of the suite, not as a standalone product. It creates a virtual network interface (TUN) and routes selected TCP/UDP/ICMP traffic through a SOCKS5 proxy using Google's gVisor userspace TCP/IP stack. The project is a single Go binary with two modes: daemon (traffic forwarding) and CLI (route management, host integration, diagnostics). The TUN backend is per-OS: `/dev/net/tun` on Linux, utun on macOS, and the embedded Wintun driver on Windows.
 
 ## Build Commands
 
@@ -236,7 +236,7 @@ Output conventions across subcommands: probe markers use the four-state vocabula
 ## Documentation
 
 Mutiauk documentation is part of the Muti Metroo documentation site:
-- **Source:** `../Muti Metroo/docs/docs/mutiauk.mdx`
+- **Source:** `../Muti-Metroo/docs/docs/mutiauk.mdx`
 - **URL:** https://mutimetroo.com/mutiauk/
 
 Edit documentation in the Muti Metroo docs directory.
