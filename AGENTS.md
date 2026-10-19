@@ -33,7 +33,7 @@ Administrator.
   admin HTTP + autoroutes + expose
 - `internal/tun/`, `internal/stack/`, `internal/proxy/` - TUN backends, gVisor
   stack wrapper, TCP/UDP/ICMP forwarders
-- `internal/socks5/` - SOCKS5 client (TCP CONNECT, UDP ASSOCIATE, ICMP echo,
+- `internal/socks5/` - SOCKS5 client (TCP CONNECT, UDP STREAM with UDP ASSOCIATE fallback, ICMP echo,
   expose streams; plain TCP and WebSocket transports)
 - `internal/route/`, `internal/nat/`, `internal/dns/` - route management,
   connection tracking, mesh DNS resolver + host-DNS integrations
@@ -101,7 +101,8 @@ config in `.github/release-please-config.json`, manifest pin in
   branding; `git grep -in 'meshy'` must stay empty.
 - Module path is `github.com/Muti-Metroo/Mutiauk`; the binary is `mutiauk`.
 - Environment variables: `MUTIAUK_SOCKS5_PASSWORD` (this daemon's SOCKS5
-  password), `MUTI_METROO_TOKEN` (the Muti Metroo agent API token).
+  password). There is no agent API token; autoroutes and expose authorize
+  through the SOCKS5 handshake.
 - **English-only, ASCII-only** in code, comments, docs, and commit messages
   (no emoji, no non-ASCII prose; em-dashes and friends included).
 - User-facing probe markers use the four-state vocabulary in

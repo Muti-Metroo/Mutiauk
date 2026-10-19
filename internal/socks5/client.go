@@ -3,12 +3,14 @@ package socks5
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,6 +30,10 @@ type Client struct {
 	WSPath     string // WebSocket path (default: "/socks5")
 	WSUsername string // WebSocket HTTP Basic Auth username (optional)
 	WSPassword string // WebSocket HTTP Basic Auth password (optional)
+
+	// udpStreamUnsupported is set once the server has refused UDP STREAM
+	// while accepting UDP ASSOCIATE, so later associations skip the probe.
+	udpStreamUnsupported atomic.Bool
 }
 
 // ClientOptions contains optional configuration for the SOCKS5 client
@@ -114,8 +120,67 @@ func (c *Client) Connect(ctx context.Context, addr string) (net.Conn, error) {
 	return conn, nil
 }
 
-// UDPAssociate establishes a UDP relay through the SOCKS5 proxy
+// UDPAssociate establishes a UDP relay through the SOCKS5 proxy.
+//
+// It first asks for UDP STREAM (Muti Metroo extension 0x08), which carries
+// the datagrams on the SOCKS5 connection itself: it works over the WebSocket
+// transport, is encrypted along with a wss:// connection, and needs no UDP
+// port on the server reachable from this host. A server that does not
+// support it (it replies "command not supported", or drops the connection
+// after the request) gets a standard RFC 1928 UDP ASSOCIATE instead.
 func (c *Client) UDPAssociate(ctx context.Context, localAddr *net.UDPAddr) (*UDPRelay, error) {
+	if !c.udpStreamUnsupported.Load() {
+		relay, fallback, err := c.udpStreamAssociate(ctx)
+		if err == nil {
+			return relay, nil
+		}
+		if !fallback {
+			return nil, err
+		}
+		relay, err = c.udpAssociate(ctx, localAddr)
+		if err == nil {
+			// Remember only when ASSOCIATE works, so an agent with UDP
+			// disabled is probed again once it is enabled.
+			c.udpStreamUnsupported.Store(true)
+		}
+		return relay, err
+	}
+	return c.udpAssociate(ctx, localAddr)
+}
+
+// udpStreamAssociate requests a UDP STREAM association. On failure,
+// fallback reports whether the server got as far as rejecting the command
+// itself, so UDP ASSOCIATE is worth trying; connection and authentication
+// failures would fail the same way again.
+func (c *Client) udpStreamAssociate(ctx context.Context) (relay *UDPRelay, fallback bool, err error) {
+	conn, err := c.dialServer(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if c.Timeout > 0 {
+		conn.SetDeadline(time.Now().Add(c.Timeout))
+	}
+
+	if err := c.handshake(conn); err != nil {
+		conn.Close()
+		return nil, false, fmt.Errorf("handshake failed: %w", err)
+	}
+
+	if _, err := c.sendRequest(conn, CmdUDPStream, &Address{Type: AddrTypeIPv4, IP: net.IPv4zero.To4()}); err != nil {
+		conn.Close()
+		var serr *Error
+		fallback = !errors.As(err, &serr) || serr.Code == ReplyCommandNotSupported
+		return nil, fallback, fmt.Errorf("udp stream failed: %w", err)
+	}
+
+	conn.SetDeadline(time.Time{})
+
+	return &UDPRelay{controlConn: conn, stream: true}, false, nil
+}
+
+// udpAssociate requests a standard UDP ASSOCIATE association.
+func (c *Client) udpAssociate(ctx context.Context, localAddr *net.UDPAddr) (*UDPRelay, error) {
 	// Connect to SOCKS5 server
 	conn, err := c.dialServer(ctx)
 	if err != nil {
@@ -448,12 +513,21 @@ func (c *Client) readReply(conn net.Conn) (*Address, error) {
 	return addr, nil
 }
 
-// UDPRelay handles UDP forwarding through SOCKS5
+// maxStreamFrame is the largest UDP STREAM frame body (SOCKS5 UDP header
+// plus payload), bounded by the 2-byte length prefix.
+const maxStreamFrame = 0xFFFF
+
+// UDPRelay handles UDP forwarding through SOCKS5. In stream mode (UDP
+// STREAM) the datagrams travel on controlConn as 2-byte big-endian length
+// prefixed frames, and relayConn and relayAddr are nil.
 type UDPRelay struct {
 	controlConn net.Conn     // TCP connection to keep UDP association alive
 	relayConn   *net.UDPConn // UDP connection to relay
 	relayAddr   *Address     // Address of the relay
 	monitorOnce sync.Once    // Guards MonitorControlConn
+
+	stream  bool
+	writeMu sync.Mutex // Serializes frame writes in stream mode
 }
 
 // MonitorControlConn starts a goroutine that invokes onClose when the
@@ -462,7 +536,14 @@ type UDPRelay struct {
 // the signal that the association is dead and must be torn down. The callback
 // also fires when the relay is closed locally via Close. Only the first call
 // to MonitorControlConn has any effect.
+//
+// In stream mode the control connection carries the datagrams, so it is not
+// read here: Receive returns an error when it closes, and callers detect the
+// end of the association that way.
 func (r *UDPRelay) MonitorControlConn(onClose func()) {
+	if r.stream {
+		return
+	}
 	r.monitorOnce.Do(func() {
 		go func() {
 			// A SOCKS5 server never sends data on the control connection;
@@ -492,6 +573,23 @@ func (r *UDPRelay) Send(data []byte, target *Address) error {
 		return err
 	}
 
+	if r.stream {
+		size := 3 + len(addrBytes) + len(data)
+		if size > maxStreamFrame {
+			return fmt.Errorf("datagram too large for stream frame: %d bytes", size)
+		}
+		frame := make([]byte, 2+size)
+		binary.BigEndian.PutUint16(frame, uint16(size))
+		// frame[2:5] is RSV, RSV, FRAG, all zero.
+		copy(frame[5:], addrBytes)
+		copy(frame[5+len(addrBytes):], data)
+
+		r.writeMu.Lock()
+		defer r.writeMu.Unlock()
+		_, err := r.controlConn.Write(frame)
+		return err
+	}
+
 	packet := make([]byte, 3+len(addrBytes)+len(data))
 	packet[0] = 0 // RSV
 	packet[1] = 0 // RSV
@@ -506,9 +604,29 @@ func (r *UDPRelay) Send(data []byte, target *Address) error {
 
 // Receive receives a UDP datagram from the relay
 func (r *UDPRelay) Receive(buf []byte) (int, *Address, error) {
-	n, _, err := r.relayConn.ReadFrom(buf)
-	if err != nil {
-		return 0, nil, err
+	var n int
+	if r.stream {
+		var lenBuf [2]byte
+		if _, err := io.ReadFull(r.controlConn, lenBuf[:]); err != nil {
+			return 0, nil, err
+		}
+		n = int(binary.BigEndian.Uint16(lenBuf[:]))
+		if n > len(buf) {
+			// Keep the stream in sync, then report the oversized frame.
+			if _, err := io.CopyN(io.Discard, r.controlConn, int64(n)); err != nil {
+				return 0, nil, err
+			}
+			return 0, nil, fmt.Errorf("frame too large for buffer: %d bytes", n)
+		}
+		if _, err := io.ReadFull(r.controlConn, buf[:n]); err != nil {
+			return 0, nil, err
+		}
+	} else {
+		var err error
+		n, _, err = r.relayConn.ReadFrom(buf)
+		if err != nil {
+			return 0, nil, err
+		}
 	}
 
 	if n < 4 {
@@ -535,23 +653,42 @@ func (r *UDPRelay) Receive(buf []byte) (int, *Address, error) {
 	return dataLen, addr, nil
 }
 
-// LocalAddr returns the local UDP address
+// IsStream reports whether the relay carries datagrams on the SOCKS5
+// connection (UDP STREAM) rather than a separate UDP socket.
+func (r *UDPRelay) IsStream() bool {
+	return r.stream
+}
+
+// LocalAddr returns the local UDP address, or nil in stream mode.
 func (r *UDPRelay) LocalAddr() *net.UDPAddr {
+	if r.stream {
+		return nil
+	}
 	return r.relayConn.LocalAddr().(*net.UDPAddr)
 }
 
 // RemoteAddr returns the relay address we're sending to
 func (r *UDPRelay) RemoteAddr() string {
+	if r.stream {
+		return "stream"
+	}
 	return r.relayAddr.String()
 }
 
-// RelayUDPAddr returns the relay address as *net.UDPAddr
+// RelayUDPAddr returns the relay address as *net.UDPAddr, or nil in stream
+// mode.
 func (r *UDPRelay) RelayUDPAddr() *net.UDPAddr {
+	if r.stream {
+		return nil
+	}
 	return r.relayAddr.ToUDPAddr()
 }
 
 // SetReadDeadline sets the read deadline on the relay connection
 func (r *UDPRelay) SetReadDeadline(t time.Time) error {
+	if r.stream {
+		return r.controlConn.SetReadDeadline(t)
+	}
 	return r.relayConn.SetReadDeadline(t)
 }
 

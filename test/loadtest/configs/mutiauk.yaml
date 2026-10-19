@@ -17,16 +17,10 @@ routes:
     comment: "Load test target network"
     enabled: true
 
-# Pull mesh hosts from the ingress agent dashboard alongside autoroutes
+# Receive routes, mesh hosts, and DNS suffixes from the ingress agent over
+# the SOCKS5 endpoint (socks5.server)
 autoroutes:
   enabled: true
-  url: "http://mm-ingress:8080"
-  poll_interval: 2s
-  timeout: 5s
-
-dns:
-  enabled: true
-  suffix: mesh
 
 nat:
   table_size: 10000

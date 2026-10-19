@@ -2,8 +2,9 @@
 //
 // The resolver answers A and AAAA records for a fixed set of mesh
 // hostnames (e.g. "target-11.mesh") served from an in-memory map
-// populated by the autoroutes poller. The active TLD suffix set is
-// also delivered by the poller (from the agent's
+// populated from the snapshots the agent pushes over the SOCKS5
+// route-watch stream (see internal/autoroutes/watcher.go). The active
+// TLD suffix set arrives in the same snapshots (from the agent's
 // mesh_hosts_suffixes); names outside the active set return NXDOMAIN.
 // In production systemd-resolved is configured to forward only those
 // suffixes here, so the resolver effectively never sees other names.

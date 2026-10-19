@@ -26,6 +26,7 @@ const (
 	CmdRouteWatch   byte = 0x05 // Stream dashboard snapshots on change (Muti Metroo extension)
 	CmdSnapshot     byte = 0x06 // One-shot dashboard snapshot (Muti Metroo extension)
 	CmdExpose       byte = 0x07 // Run an expose session over the raw stream (Muti Metroo extension)
+	CmdUDPStream    byte = 0x08 // UDP ASSOCIATE with datagrams framed on the stream (Muti Metroo extension)
 )
 
 // Address types

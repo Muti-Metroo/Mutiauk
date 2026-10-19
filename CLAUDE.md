@@ -88,8 +88,8 @@ Always verify changes with `make test` in Docker after simplification.
 
 ```
 TCP:    Application -> TUN -> gVisor Stack -> TCP Forwarder -> SOCKS5 CONNECT -> Target
-UDP:    Application -> TUN -> Intercept Endpoint -> Raw UDP Forwarder -> SOCKS5 UDP ASSOCIATE -> Target
-ICMP:   Application -> TUN -> ICMP Forwarder (echo via SOCKS5 UDP) -> Target
+UDP:    Application -> TUN -> Intercept Endpoint -> Raw UDP Forwarder -> SOCKS5 UDP STREAM (fallback: UDP ASSOCIATE) -> Target
+ICMP:   Application -> TUN -> ICMP Forwarder (SOCKS5 ICMP echo extension, 0x04) -> Target
 Expose: Mesh peer -> Muti Metroo agent listener -> Muti Metroo -> SOCKS5 CmdExpose stream -> Mutiauk -> static folder | local TCP target
 ```
 
@@ -114,28 +114,32 @@ Expose: Mesh peer -> Muti Metroo agent listener -> Muti Metroo -> SOCKS5 CmdExpo
 
 **proxy/tcp_forwarder.go** - Implements `TCPHandler` interface. Establishes SOCKS5 CONNECT and performs bidirectional data copy. Supports `PreConnect` for accurate port scanning. The copy loop (`proxy/common.go`) propagates TCP half-close: a local FIN triggers `CloseWrite` on the mesh connection so request/response servers still deliver their in-flight reply; the WebSocket transport has no half-close semantics and falls back to a full close.
 
-**proxy/raw_udp_forwarder.go** - Implements `RawUDPHandler` interface for intercepted UDP. Uses SOCKS5 UDP ASSOCIATE to relay datagrams. Maintains a pool of relay sessions (keyed by srcIP:srcPort) with TTL-based cleanup; each association owns a reader goroutine that demultiplexes response datagrams by responder address and delivers them through the reply callback, so multi-datagram responses, interleaved destinations, and one-way flows all work without blocking. A control-connection monitor (RFC 1928: the association dies with its TCP control conn) and reader exit both evict the association from the pool. Responses are written to the TUN by the stack, which truncates oversized payloads to the link MTU with a rate-limited warning.
+**proxy/raw_udp_forwarder.go** - Implements `RawUDPHandler` interface for intercepted UDP. Relays datagrams through `socks5.Client.UDPAssociate`, which prefers UDP STREAM (see socks5/client.go) and falls back to UDP ASSOCIATE. Maintains a pool of relay sessions (keyed by srcIP:srcPort) with TTL-based cleanup; each association owns a reader goroutine that demultiplexes response datagrams by responder address and delivers them through the reply callback, so multi-datagram responses, interleaved destinations, and one-way flows all work without blocking. A control-connection monitor (RFC 1928: the association dies with its TCP control conn; not used in stream mode, where the reader sees the close) and reader exit both evict the association from the pool. Responses are written to the TUN by the stack, which truncates oversized payloads to the link MTU with a rate-limited warning.
 
-**proxy/icmp_forwarder.go** - Forwards ICMP echo requests/replies through the SOCKS5 UDP relay so `ping` works through the tunnel. Sessions are cached by (destination, echo id); session creation runs the SOCKS5 handshake outside the forwarder lock with a double-check before installing (same pattern as `RelayPool.GetOrCreate`), so a slow mesh never stalls lookups of existing sessions.
+**proxy/icmp_forwarder.go** - Forwards ICMP echo requests/replies over the Muti Metroo SOCKS5 ICMP echo command (0x04, one SOCKS5 connection per session) so `ping` works through the tunnel. Sessions are cached by (destination, echo id); session creation runs the SOCKS5 handshake outside the forwarder lock with a double-check before installing (same pattern as `RelayPool.GetOrCreate`), so a slow mesh never stalls lookups of existing sessions.
 
-**socks5/client.go** - SOCKS5 client supporting CONNECT (TCP) and UDP ASSOCIATE. Handles authentication (none or username/password).
+**socks5/client.go** - SOCKS5 client supporting CONNECT (TCP) and UDP. `UDPAssociate` first requests UDP STREAM (Muti Metroo extension 0x08: datagrams framed on the SOCKS5 connection as `[len:u16 BE][RFC 1928 UDP header + payload]`, so UDP works over WebSocket and is covered by wss:// TLS); when the server refuses the command (reply 0x07, or a dropped connection) it falls back to RFC 1928 UDP ASSOCIATE with a separate UDP socket, and remembers the refusal for the client's lifetime once ASSOCIATE succeeds. Handles authentication (none or username/password). Dials plain TCP, or WebSocket when `socks5.server` is a `ws://`/`wss://` URL or `socks5.transport: websocket` (then `wss://<server><ws_path>`).
 
 **nat/table.go** - Connection tracking with TTL-based expiration. Maps (protocol, src, dst) -> proxy connection. Background GC goroutine cleans stale entries, but skips entries whose forwarding handler holds a reference (Acquire/Release), so active connections are never reaped mid-stream no matter how old they are.
 
-**route/manager.go** - Linux route management via netlink. Supports idempotent add/remove, plan/diff for declarative route management, conflict detection for overlapping CIDRs.
+**route/manager.go** - Route management over a per-OS kernel backend: netlink on Linux (`kernel_linux.go`), `/sbin/route` + PF_ROUTE reads on macOS (`kernel_darwin.go`), the IP Helper API via winipcfg on Windows (`kernel_windows.go`). Supports idempotent add/remove, plan/diff for declarative route management, conflict detection for overlapping CIDRs.
 
-**tun/device_linux.go** - TUN device creation using `/dev/net/tun` with `TUNSETIFF` ioctl. Non-Linux platforms get a stub that returns an error.
+**tun/device_linux.go** - TUN device creation using `/dev/net/tun` with `TUNSETIFF` ioctl. `tun/device_darwin.go` uses a utun interface on macOS and `tun/device_windows.go` a Wintun adapter on Windows (the per-arch Wintun DLL is embedded via `go:embed` from `tun/wintun/<arch>/` and SHA-256-verified before loading). Other platforms get a stub (`tun/device_stub.go`) that returns an error.
 
-**dns/server.go** - In-process DNS resolver bound to the TUN IPv4 on port 53. Started when `autoroutes.enabled` is true. Resolves names that match any of the active TLD suffixes (e.g. `.mesh`) against the agent's mesh-host registry; everything else is refused so the system resolver falls through. The autoroutes poller fetches the suffix set + host list from the agent dashboard and applies it to the DNS server atomically with each route refresh. `SetState` validates agent-supplied suffixes against the strict DNS-label charset (lowercase alnum + interior hyphens, no empty labels, max 253 chars) and drops invalid entries with a Warn, since suffixes are written into root-owned host config (dnsmasq drop-ins, `/etc/resolver` files, resolvectl argv, NRPT).
+**dns/server.go** - In-process DNS resolver bound to the TUN IPv4 on port 53. Started when `autoroutes.enabled` is true. Resolves names that match any of the active TLD suffixes (e.g. `.mesh`) against the agent's mesh-host registry; everything else is refused so the system resolver falls through. The suffix set + host list arrive in the snapshots the agent pushes over the autoroutes route-watch stream (`autoroutes/watcher.go`) and are applied to the DNS server atomically with each route update. `SetState` validates agent-supplied suffixes against the strict DNS-label charset (lowercase alnum + interior hyphens, no empty labels, max 253 chars) and drops invalid entries with a Warn, since suffixes are written into root-owned host config (dnsmasq drop-ins, `/etc/resolver` files, resolvectl argv, NRPT).
 
 **dns/integration.go** - Pluggable host-DNS integration. Defines the `Integration` interface (`Name`, `Apply(suffixes)`, `Revert`), the `DetectIntegration(preference, iface, listenIP, logger)` constructor, and `RevertAll` (idempotent best-effort revert across every backend, used by the daemon at startup and by `mutiauk cleanup`). Backends:
 - **dns/resolvectl_linux.go** - `resolvectlIntegration`. Runs `resolvectl dns/domain` to give systemd-resolved a per-link mesh resolver + routing-only `~suffix` domains.
 - **dns/nmdnsmasq_linux.go** - `nmDnsmasqIntegration`. Writes `/etc/NetworkManager/dnsmasq.d/mutiauk.conf` with one `server=/<tld>/<resolver-ip>` line per active TLD, then reloads NetworkManager. Atomic write via temp + rename.
-- **noop** (file-private) - selected when neither is available or `dns_integration: none`. Logs once at construction.
+- **dns/resolver_darwin.go** - `etcResolverIntegration` (`etc-resolver`, macOS). Writes one `/etc/resolver/<tld>` file per active TLD pointing at the resolver; `etcresolver_stub.go` covers other platforms.
+- **dns/nrpt_windows.go** - `nrptIntegration` (`nrpt`, Windows). Installs Name Resolution Policy Table rules routing each active TLD to the resolver; `nrpt_other.go` covers other platforms.
+- **noop** (file-private) - selected when no backend is available or `dns_integration: none`. Logs once at construction.
 
-The daemon's `applyDNSIntegration` keys a diff cache on `(listenIP, suffixes)` so `Apply` only fires on actual change; quiet polls skip the integration entirely.
+Under `auto`, `DetectIntegration` tries resolvectl, then nm-dnsmasq, then etc-resolver, then nrpt; each is only available on its own platform.
 
-**dns/hoststate_linux.go** - `ResolvectlHostState(iface)` and `NMDnsmasqHostState()` read host-side artifacts (resolvectl per-link config, the dnsmasq drop-in) for the `mutiauk dns status` diagnostic.
+The daemon's `applyDNSIntegration` keys a diff cache on `(listenIP, suffixes)` so `Apply` only fires on actual change; snapshots that do not change the suffix set skip the integration entirely.
+
+**dns/hoststate_linux.go** - `ResolvectlHostState(iface)` and `NMDnsmasqHostState()` read host-side artifacts (resolvectl per-link config, the dnsmasq drop-in) for the `mutiauk dns status` diagnostic. On macOS `EtcResolverHostState()` (resolver_darwin.go) and on Windows `NRPTHostState()` (nrpt_windows.go) play the same role.
 
 **autoroutes/watcher.go** - Route-watch stream over the SOCKS5 endpoint (`socks5.server`): the agent pushes dashboard snapshots (routes, mesh hosts, TLD suffixes) and heartbeats; each snapshot is applied atomically through the daemon's `onDashboardUpdate`. Reconnects with jittered backoff (shared `internal/backoff.Jitter`). The watcher records the last-snapshot timestamp, surfaced as `last_snapshot`/`last_snapshot_age` in the API status, the admin dashboard, and `mutiauk status`. With `autoroutes.stale_timeout` set, the daemon flushes auto routes and mesh DNS state once no snapshot has arrived for that long; by default routes ride out agent outages indefinitely.
 
@@ -172,7 +176,7 @@ type UDPReplyFunc func(responderIP, clientIP net.IP, responderPort, clientPort u
 
 // dns/integration.go - Implemented by each host-DNS backend
 type Integration interface {
-    Name() string                  // "resolvectl" | "nm-dnsmasq" | "none"
+    Name() string                  // "resolvectl" | "nm-dnsmasq" | "etc-resolver" | "nrpt" | "none"
     Apply(suffixes []string) error
     Revert() error                 // idempotent
 }
@@ -200,7 +204,7 @@ Config file: YAML format, see `configs/mutiauk.example.yaml`
 Key sections:
 - `daemon`: PID file, API socket path, optional health port, `status_probe_target` (host:port that `mutiauk status` opens through the SOCKS5 tunnel; default `example.com:80`, override for air-gapped networks). The daemon holds an exclusive kernel lock (flock / LockFileEx) on the PID file for its whole lifetime as a single-instance guard; a second `daemon start` is refused while the lock is held
 - `tun`: Interface name, MTU (default 1400), IPv4/IPv6 addresses
-- `socks5`: Proxy server, auth credentials (password also via `MUTIAUK_SOCKS5_PASSWORD` env), timeouts, transport (tcp/websocket; auto-detected from `ws://`/`wss://` scheme). `keepalive` drives both TCP keepalive (tcp transport) and periodic WebSocket pings (websocket transport). WARNING: the WebSocket transport carries TCP/ICMP only; the UDP data plane always uses a raw UDP socket to the agent, so UDP (including tunneled DNS) breaks if the agent is reachable only via WebSocket
+- `socks5`: Proxy server, auth credentials (password also via `MUTIAUK_SOCKS5_PASSWORD` env), timeouts, transport (tcp/websocket; auto-detected from `ws://`/`wss://` scheme). `keepalive` drives both TCP keepalive (tcp transport) and periodic WebSocket pings (websocket transport). UDP rides the SOCKS5 connection via UDP STREAM, so it works over WebSocket; only the UDP ASSOCIATE fallback (agents without UDP STREAM) needs the agent's UDP relay socket reachable, and breaks when the agent is reachable only via WebSocket
 - `routes`: Static CIDR destinations to forward through the proxy. `enabled` defaults to `true` when the YAML omits the key; the daemon emits a per-route WARN at startup so legacy configs surface in journald
 - `autoroutes`: Route/host state pushed by the Muti Metroo agent over the SOCKS5 route-watch stream (`enabled`); also gates the local DNS resolver. `stale_timeout` (default off) flushes auto routes + mesh DNS state when no snapshot arrives within the timeout; the last-snapshot age is visible in `mutiauk status` and the dashboard regardless
 - `dns_integration`: `auto` (default), `resolvectl`, `nm-dnsmasq`, `etc-resolver` (macOS), `nrpt` (Windows), or `none`
@@ -215,7 +219,7 @@ Config files are written with mode `0600` by both `cfg.Save` and the wizard sinc
 
 Top-level subcommands (registered in `internal/cli/root.go`):
 
-- `setup` - Interactive TTY wizard only (requires a TTY). Point it at an existing config (the path it asks for) to edit it: current values become the prompt defaults and sections the wizard never asks about (expose, NAT, dns_integration, daemon, logging) are preserved via a clone of the loaded config. For unattended generation, use `config generate` instead.
+- `setup` - Interactive TTY wizard only (requires a TTY). Point it at an existing config (the path it asks for) to edit it: current values become the prompt defaults and sections the wizard never asks about (expose, NAT, dns_integration, daemon, logging) are preserved via a clone of the raw (no defaults, no env overrides) parse of the file, as are the `socks5` transport, `ws_path`, `timeout`, and `keepalive`. The SOCKS5 server prompt accepts `host:port` or a `ws://`/`wss://` URL (`wizard.SOCKS5Server`, same rules as `config.Validate`) and prints a one-time unencrypted-link note for a non-loopback plain `host:port`. For unattended generation, use `config generate` instead.
 - `daemon` - `start`, `stop` (with `--wait` default-true, `--timeout`, `--force` for SIGKILL escalation), `reload`, `status` (lightweight pid/uptime/config_path; suitable for k8s readiness checks).
 - `route` - `add`/`remove` (refuse direct kernel mutation when daemon is offline unless `--force`), `list`, `plan`, `apply`, `check`, `trace`.
 - `host` - `list` (read-only; mesh hosts are managed centrally on the agent).
@@ -224,7 +228,7 @@ Top-level subcommands (registered in `internal/cli/root.go`):
 - `status` - Full system status with connectivity probes. Flags: `--exit-code`, `--quiet` (implies `--exit-code`), `--check tun|socks5|tcp|udp|expose|daemon` (repeatable; scopes the exit code), `--skip-tests`, `--json`.
 - `admin` - Print the admin dashboard login URL (carries the token from the 0600 `admin-token` file as `?token=`, which the daemon exchanges for a session cookie).
 - `service` - `install`, `uninstall`, `status` (with `--json` returning `{installed, active, enabled, sub_state}`).
-- `config` - `check` (validate the file; `--strict`, `--json` for CI gating); `generate` (non-interactive config generation for Ansible/Salt/cloud-init: layers `wizard.BuildBaselineConfig()` defaults < `--from <answers.yaml>` < per-field flags (`--tun-name`, `--socks5-server`, `--autoroutes-url`, ...), validates, writes at mode 0600. Flags: `--from`, `--output`/`-o`, `--force`, `--json`. Secrets come from `MUTI_METROO_TOKEN` / `MUTIAUK_SOCKS5_PASSWORD` env vars; never written to the answers file or command line. Service install is left to `service install`).
+- `config` - `check` (validate the file; `--strict`, `--json` for CI gating); `generate` (non-interactive config generation for Ansible/Salt/cloud-init: layers `wizard.BuildBaselineConfig()` defaults < `--from <answers.yaml>` < per-field flags (`--tun-name`, `--tun-address`, `--tun-address6`, `--socks5-server` (host:port or ws/wss URL), `--socks5-username`, `--autoroutes-enabled`), validates, writes at mode 0600. Flags: `--from`, `--output`/`-o`, `--force`, `--json`. The SOCKS5 password comes from the `MUTIAUK_SOCKS5_PASSWORD` env var at load time; it is never written to the answers file or command line. Service install is left to `service install`).
 - `cleanup` - Reset host state after crash (TUN interface, stale PID file/socket, and all host-DNS integration state via `dns.RevertAll` - including macOS /etc/resolver files); `--dry-run` previews actions, `--purge` also removes the route state file.
 - `completion` - Emit shell-completion for `bash|zsh|fish|powershell`.
 - `version` - Print version, git commit, build date.
@@ -247,7 +251,7 @@ Releases are driven by release-please (`.github/workflows/release-please.yml`).
 Commits on master use Conventional Commits; `fix:`/`feat:` commits make
 release-please propose a patch/minor release PR. Merging that PR tags the
 release, bumps `CHANGELOG.md` and the manifest pin, and the
-workflow builds and uploads the Linux amd64/arm64 binaries + checksums.
+workflow cross-compiles (on ubuntu, `CGO_ENABLED=0`, Go from `go.mod`) and uploads `mutiauk-linux-amd64`, `mutiauk-linux-arm64`, `mutiauk-darwin-amd64`, `mutiauk-darwin-arm64`, `mutiauk-windows-amd64.exe`, `mutiauk-windows-arm64.exe`, plus `checksums.txt` covering all of them. Only the Linux binaries are UPX-compressed (UPX on Windows EXEs trips antivirus, and UPX-packed macOS binaries do not run on recent macOS).
 
 Never tag or create releases by hand.
 

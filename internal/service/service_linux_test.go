@@ -12,7 +12,7 @@ import (
 func TestGenerateSystemdUnit(t *testing.T) {
 	cfg := ServiceConfig{
 		Name:        "mutiauk",
-		Description: "Mutiauk TUN-based SOCKS5 proxy agent",
+		Description: "Mutiauk TUN interface for Muti Metroo",
 		ConfigPath:  "/etc/mutiauk/config.yaml",
 		WorkingDir:  "/etc/mutiauk",
 	}

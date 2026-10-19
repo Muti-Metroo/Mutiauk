@@ -83,6 +83,45 @@ func TestConfigGenerate_FlagOverridesAnswers(t *testing.T) {
 	}
 }
 
+func TestConfigGenerate_WebSocketServerFlag(t *testing.T) {
+	dir := t.TempDir()
+	answers := filepath.Join(dir, "answers.yaml")
+	if err := os.WriteFile(answers, []byte(minimalAnswers), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, server := range []string{
+		"wss://relay.example.com:8443/socks5",
+		"ws://relay.example.com/socks5",
+	} {
+		out := filepath.Join(dir, strings.SplitN(server, ":", 2)[0]+".yaml")
+		if err := runConfigGenerate(generateOpts{
+			answersPath:  answers,
+			outputPath:   out,
+			socks5Server: server,
+		}); err != nil {
+			t.Fatalf("runConfigGenerate(%q): %v", server, err)
+		}
+		cfg, err := config.Load(out)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SOCKS5.Server != server {
+			t.Errorf("SOCKS5.Server = %q, want %q", cfg.SOCKS5.Server, server)
+		}
+	}
+
+	// A ws URL without a host is rejected by validation.
+	err := runConfigGenerate(generateOpts{
+		answersPath:  answers,
+		outputPath:   filepath.Join(dir, "bad.yaml"),
+		socks5Server: "wss:///socks5",
+	})
+	if err == nil || !strings.Contains(err.Error(), "must include host") {
+		t.Errorf("expected host validation error, got %v", err)
+	}
+}
+
 func TestConfigGenerate_AutoroutesEnabledFlag(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "config.yaml")

@@ -9,9 +9,6 @@ permissions:
   contents: write
   pull-requests: write
 
-env:
-  GO_VERSION: "1.25"
-
 jobs:
   release-please:
     runs-on: ubuntu-latest
@@ -28,6 +25,9 @@ jobs:
   build:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
+    # Every target is cross-compiled from Linux with CGO disabled. The
+    # Windows builds embed the Wintun DLL via go:embed (internal/tun), so a
+    # plain GOOS=windows build is self-contained.
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -36,13 +36,28 @@ jobs:
             goarch: amd64
           - goos: linux
             goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+          - goos: windows
+            goarch: arm64
+            ext: .exe
+
+    env:
+      BINARY_NAME: mutiauk-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
 
     steps:
       - uses: actions/checkout@v4
 
+      # go.mod pins go 1.25.x. gVisor does not compile on Go 1.26, so the
+      # toolchain must come from go.mod rather than a floating version.
       - uses: actions/setup-go@v5
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
 
       - name: Build binary
         env:
@@ -50,29 +65,31 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
+          go version
           VERSION=${{ needs.release-please.outputs.tag_name }}
           VERSION=${VERSION#v}
-          BINARY_NAME="mutiauk-${{ matrix.goos }}-${{ matrix.goarch }}"
           go build -trimpath \
             -ldflags="-s -w -X github.com/Muti-Metroo/Mutiauk/internal/cli.Version=$VERSION" \
             -o "$BINARY_NAME" \
             ./cmd/mutiauk
 
+      # UPX only for Linux. Windows EXEs packed with UPX get flagged by
+      # antivirus, and UPX-packed macOS binaries do not run on recent macOS.
       - name: Install UPX
+        if: ${{ matrix.goos == 'linux' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y upx
 
       - name: Compress with UPX
+        if: ${{ matrix.goos == 'linux' }}
         run: |
-          BINARY_NAME="mutiauk-${{ matrix.goos }}-${{ matrix.goarch }}"
           upx --best --lzma "$BINARY_NAME" || echo "UPX compression failed"
 
       - name: Upload binary to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BINARY_NAME="mutiauk-${{ matrix.goos }}-${{ matrix.goarch }}"
           gh release upload "${{ needs.release-please.outputs.tag_name }}" "$BINARY_NAME" --clobber
 
   checksums:
@@ -80,6 +97,8 @@ jobs:
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: ubuntu-latest
     steps:
+      # The mutiauk-* pattern covers every platform asset, including the
+      # Windows .exe files.
       - name: Download all binaries
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

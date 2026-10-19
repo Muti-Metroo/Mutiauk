@@ -68,7 +68,7 @@ func (s *Server) handleExposeList(w http.ResponseWriter, _ *http.Request) {
 
 // AgentStatus is the consolidated view of this Mutiauk's connection
 // to the upstream Muti Metroo agent: the SOCKS5 data-plane endpoint, the
-// autoroutes poller, and the expose control stream. It lets the
+// autoroutes route-watch stream, and the expose control stream. It lets the
 // dashboard render "connection info and status to the Muti Metroo agent" in
 // a single request.
 type AgentStatus struct {

@@ -54,12 +54,12 @@ socks5:
   # transport is auto-detected from the URL scheme and this explicit
   # value is ignored.
   #
-  # WARNING: the WebSocket transport carries TCP and ICMP only. The UDP
-  # data plane (UDP ASSOCIATE) ALWAYS uses a raw UDP socket to the agent
-  # (`server` host), even when transport is "websocket". If the agent is
-  # reachable only via WebSocket (e.g. behind a CDN or a TCP-only
-  # proxy), UDP traffic - including DNS through the tunnel - will not
-  # work. UDP-over-WebSocket framing is not implemented.
+  # UDP travels on the SOCKS5 connection itself (UDP STREAM, a Muti
+  # Metroo extension), so it works over WebSocket too and is encrypted
+  # along with a wss:// connection. Agents without UDP STREAM get a
+  # standard UDP ASSOCIATE, which uses a separate, unencrypted UDP socket
+  # to the agent and does not work when only the WebSocket port is
+  # reachable.
   transport: tcp
   # WebSocket path (default: "/socks5")
   # Only used when transport is "websocket" and server is not a full URL
@@ -82,24 +82,30 @@ routes:
   #   comment: "Target network"
   #   enabled: true
 
-# Automatic route fetching from Muti Metroo
-# When enabled, Mutiauk polls the Muti Metroo API to fetch routes
-# advertised by other agents and adds them to the local routing table.
-# These routes are ephemeral and not saved to the config file.
+# Automatic routes from Muti Metroo
+# When enabled, Mutiauk opens a route-watch stream to the agent over the
+# SOCKS5 endpoint (socks5.server). The agent pushes a snapshot of the
+# routes advertised by the mesh whenever they change, and Mutiauk applies
+# them to the local routing table. These routes are ephemeral and not
+# saved to the config file.
 #
 # When autoroutes is enabled, Mutiauk also runs a local mesh DNS
 # resolver bound to the TUN IPv4 address. The active TLD set
-# (mesh_hosts_suffixes) and the host list are fetched from the agent
-# on each poll; the host's DNS resolver is configured automatically.
+# (mesh_hosts_suffixes) and the host list arrive in the same pushed
+# snapshots; the host's DNS resolver is configured automatically.
 # Use "mutiauk host list" to inspect what the daemon currently
 # serves. Hostnames and suffixes are managed centrally on the Muti Metroo
 # agent (POST /hosts/manage and POST /hosts/suffixes/manage).
 
 # How mesh-host DNS is wired into the host resolver.
-#   auto         - resolvectl (systemd-resolved) preferred; fall back to
-#                  NetworkManager's dnsmasq plugin; otherwise no host wiring.
-#   resolvectl   - require systemd-resolved.
-#   nm-dnsmasq   - require NetworkManager configured with dns=dnsmasq.
+#   auto         - pick the platform backend: on Linux resolvectl
+#                  (systemd-resolved) preferred, falling back to
+#                  NetworkManager's dnsmasq plugin; etc-resolver on macOS;
+#                  nrpt on Windows; otherwise no host wiring.
+#   resolvectl   - require systemd-resolved (Linux).
+#   nm-dnsmasq   - require NetworkManager configured with dns=dnsmasq (Linux).
+#   etc-resolver - per-suffix files under /etc/resolver (macOS).
+#   nrpt         - Name Resolution Policy Table rules (Windows).
 #   none         - leave host DNS alone; configure your resolver manually.
 # Default: auto.
 # dns_integration: auto

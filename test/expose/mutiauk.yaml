@@ -15,9 +15,6 @@ routes: []
 
 autoroutes:
   enabled: true
-  source: socks
-  poll_interval: 5s
-  timeout: 5s
 
 expose:
   enabled: true

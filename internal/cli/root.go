@@ -17,9 +17,10 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "mutiauk",
-	Short: "TUN to SOCKS5 proxy agent",
-	Long: `Mutiauk is a TUN-based traffic capture and forwarder for TCP + UDP
-into a SOCKS5 proxy, with built-in route management.
+	Short: "TUN interface for Muti Metroo",
+	Long: `Mutiauk is the TUN interface for the Muti Metroo suite. It captures
+TCP and UDP traffic on a TUN device and forwards it through a Muti Metroo
+agent's SOCKS5 endpoint, with built-in route management.
 
 New here? Run "sudo mutiauk setup" for an interactive wizard.
 

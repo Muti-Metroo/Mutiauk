@@ -58,17 +58,28 @@ When the ingress agent runs on another host, enable SOCKS5 authentication on the
 
 ## Installation
 
-Download the latest Linux release from the
+Download the latest release for your platform from the
 [Releases](https://github.com/Muti-Metroo/Mutiauk/releases) page.
 
 ```bash
-# Download
+# Download (Linux amd64 shown; pick the asset for your platform)
 curl -L -o mutiauk https://github.com/Muti-Metroo/Mutiauk/releases/latest/download/mutiauk-linux-amd64
 chmod +x mutiauk
 sudo mv mutiauk /usr/local/bin/
 ```
 
-Releases include Linux binaries only. Build macOS and Windows binaries from source (see [Building](#building)).
+Each release ships these binaries plus a `checksums.txt` (SHA-256):
+
+| Platform | Asset |
+|----------|-------|
+| Linux amd64 | `mutiauk-linux-amd64` |
+| Linux arm64 | `mutiauk-linux-arm64` |
+| macOS Apple silicon | `mutiauk-darwin-arm64` |
+| macOS Intel | `mutiauk-darwin-amd64` |
+| Windows amd64 | `mutiauk-windows-amd64.exe` |
+| Windows arm64 | `mutiauk-windows-arm64.exe` |
+
+The Windows binaries embed the Wintun driver, so no separate download is needed. You can also build from source (see [Building](#building)).
 
 ## Usage
 
@@ -78,9 +89,9 @@ New here? Run the interactive setup wizard:
 sudo mutiauk setup
 ```
 
-The wizard asks for the SOCKS5 server as `host:port` (plain TCP). For a `wss://` server, use `config generate --socks5-server wss://...`, the Mutiauk wizard in Muti Metroo Manager, or edit the config file.
+The wizard asks for the SOCKS5 server as either `host:port` (plain TCP) or a `wss://host:port/path` URL (the SOCKS5 WebSocket listener over TLS, recommended for a remote agent). A plain `host:port` pointing at a non-loopback address gets a short reminder that the link is unencrypted.
 
-The wizard can also edit an existing config: give it the path to a current `config.yaml` and its values become the prompt defaults, with sections it never asks about (expose, NAT, DNS, logging) preserved.
+The wizard can also edit an existing config: give it the path to a current `config.yaml` and its values become the prompt defaults, with settings it never asks about (expose, NAT, DNS, logging, and the `socks5` transport, `ws_path`, `timeout`, and `keepalive`) preserved.
 
 For Ansible/Salt/cloud-init, generate the config non-interactively with `config generate`. The answers file is just a partial (or full) `config.yaml` (same schema, missing fields fall to defaults). Per-field flags override the answers file (Helm-style); secrets come from the `MUTIAUK_SOCKS5_PASSWORD` env var rather than the file or command line.
 
@@ -255,7 +266,7 @@ When `autoroutes.enabled` is true, Mutiauk runs a local DNS resolver on the TUN 
 
 If neither is present, the daemon logs a one-line warning and stays out of the way; you can still query the resolver directly at the TUN address.
 
-Selection is automatic. Override with `dns_integration: auto|resolvectl|nm-dnsmasq|none` in the config if you want to force a specific path. Use `mutiauk dns status` to see what's active.
+Selection is automatic. Override with `dns_integration: auto|resolvectl|nm-dnsmasq|none` in the config if you want to force a specific path (`etc-resolver` and `nrpt` are the macOS and Windows backends). Use `mutiauk dns status` to see what's active.
 
 ### Path A: systemd-resolved (recommended for typical Kali)
 

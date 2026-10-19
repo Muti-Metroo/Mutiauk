@@ -63,7 +63,7 @@ env var rather than the answers file or command line.`,
 	cmd.Flags().StringVar(&opts.tunName, "tun-name", "", "override tun.name")
 	cmd.Flags().StringVar(&opts.tunAddress, "tun-address", "", "override tun.address (IPv4 CIDR)")
 	cmd.Flags().StringVar(&opts.tunAddress6, "tun-address6", "", "override tun.address6 (IPv6 CIDR)")
-	cmd.Flags().StringVar(&opts.socks5Server, "socks5-server", "", "override socks5.server")
+	cmd.Flags().StringVar(&opts.socks5Server, "socks5-server", "", "override socks5.server (host:port, or wss://host:port/path)")
 	cmd.Flags().StringVar(&opts.socks5Username, "socks5-username", "", "override socks5.username (use MUTIAUK_SOCKS5_PASSWORD for the password)")
 	cmd.Flags().BoolVar(&opts.autoroutesEnabled, "autoroutes-enabled", false, "enable autoroutes (receive routes over the SOCKS5 endpoint)")
 

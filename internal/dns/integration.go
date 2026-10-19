@@ -31,8 +31,8 @@ const (
 )
 
 // DetectIntegration picks a backend based on `preference`:
-//   - "auto" / "" : resolvectl if available, else nm-dnsmasq if
-//     available, else noop.
+//   - "auto" / "" : the first available of resolvectl, nm-dnsmasq
+//     (Linux), etc-resolver (macOS), and nrpt (Windows), else noop.
 //   - explicit name: that backend if available; error otherwise.
 //   - "none": noop.
 func DetectIntegration(preference, iface, listenIP string, logger *zap.Logger) (Integration, error) {
@@ -74,7 +74,7 @@ func DetectIntegration(preference, iface, listenIP string, logger *zap.Logger) (
 	case IntegrationNone:
 		return newNoopIntegration(logger), nil
 	default:
-		return nil, fmt.Errorf("dns_integration: unknown value %q (want auto, resolvectl, nm-dnsmasq, etc-resolver, or none)", preference)
+		return nil, fmt.Errorf("dns_integration: unknown value %q (want auto, resolvectl, nm-dnsmasq, etc-resolver, nrpt, or none)", preference)
 	}
 }
 

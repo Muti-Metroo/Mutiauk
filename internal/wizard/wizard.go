@@ -3,8 +3,10 @@ package wizard
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Muti-Metroo/Mutiauk/internal/config"
@@ -41,7 +43,7 @@ func New() *Wizard {
 
 // Run executes the setup wizard and returns the generated config path.
 func (w *Wizard) Run() (string, error) {
-	prompt.PrintBanner("Mutiauk Setup Wizard", "TUN-based SOCKS5 Proxy Agent")
+	prompt.PrintBanner("Mutiauk Setup Wizard", "TUN interface for Muti Metroo")
 
 	fmt.Println("This wizard will help you configure Mutiauk.")
 	fmt.Println("Press Enter to accept default values shown in [brackets].")
@@ -272,15 +274,32 @@ func (w *Wizard) askTUNConfig() (config.TUNConfig, error) {
 func (w *Wizard) askSOCKS5Config() (config.SOCKS5Config, error) {
 	prompt.PrintHeader("SOCKS5 Proxy", "Configure the upstream SOCKS5 proxy server.")
 
-	cfg := config.SOCKS5Config{}
 	existing := w.existingSOCKS5()
+	raw := w.existingRawSOCKS5()
 
-	server, err := prompt.ReadLineValidated("SOCKS5 server address", orDefault(existing.Server, "127.0.0.1:1080"),
-		Chain(Required("server address"), HostPort()))
+	// Carry over the knobs the wizard does not prompt for (transport,
+	// ws_path, timeout, keepalive). They come from the raw parse so a
+	// re-save neither freezes defaults into the file nor drops what the
+	// operator set by hand.
+	cfg := config.SOCKS5Config{
+		Transport: raw.Transport,
+		WSPath:    raw.WSPath,
+		Timeout:   raw.Timeout,
+		KeepAlive: raw.KeepAlive,
+	}
+
+	server, err := prompt.ReadLineValidated("SOCKS5 server (host:port, or wss://host:port/path)",
+		orDefault(existing.Server, "127.0.0.1:1080"),
+		Chain(Required("server address"), SOCKS5Server()))
 	if err != nil {
 		return cfg, err
 	}
 	cfg.Server = server
+
+	if isPlainRemoteSOCKS5(cfg) {
+		prompt.PrintInfo("Plain SOCKS5 is unencrypted between this host and the agent.")
+		prompt.PrintInfo("Use a wss:// URL (e.g. wss://relay.example.com:8443/socks5) to encrypt it.")
+	}
 
 	useAuth, err := prompt.Confirm("Does the SOCKS5 server require authentication?", existing.Username != "")
 	if err != nil {
@@ -315,6 +334,46 @@ func (w *Wizard) askSOCKS5Config() (config.SOCKS5Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// isPlainRemoteSOCKS5 reports whether cfg would carry SOCKS5 in clear
+// text to a non-loopback agent: a host:port server without the
+// websocket transport (which wraps host:port in wss://).
+func isPlainRemoteSOCKS5(cfg config.SOCKS5Config) bool {
+	if IsWebSocketURL(cfg.Server) || cfg.Transport == "websocket" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(cfg.Server)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return false
+	}
+	return true
+}
+
+// transportSummary describes how cfg reaches the SOCKS5 server, matching
+// the socks5 client's dial logic: a ws:// or wss:// URL wins, then the
+// websocket transport (wss://host:port + ws_path), else plain TCP.
+func transportSummary(cfg config.SOCKS5Config) string {
+	switch {
+	case strings.HasPrefix(cfg.Server, "wss://"):
+		return "WebSocket over TLS (wss://)"
+	case strings.HasPrefix(cfg.Server, "ws://"):
+		return "WebSocket without TLS (ws://, unencrypted)"
+	case cfg.Transport == "websocket":
+		path := cfg.WSPath
+		if path == "" {
+			path = "/socks5"
+		}
+		return fmt.Sprintf("WebSocket over TLS (wss://, path %s)", path)
+	default:
+		return "plain SOCKS5 over TCP (unencrypted)"
+	}
 }
 
 func (w *Wizard) askAutoRoutes() (config.AutoRoutesConfig, bool, error) {
@@ -563,6 +622,7 @@ func (w *Wizard) printSummary(cfg *config.Config, configPath string) {
 	}
 	fmt.Printf("  MTU:             %d\n", cfg.TUN.MTU)
 	fmt.Printf("  SOCKS5 server:   %s\n", cfg.SOCKS5.Server)
+	fmt.Printf("  Transport:       %s\n", transportSummary(cfg.SOCKS5))
 	if cfg.SOCKS5.Username != "" {
 		fmt.Printf("  SOCKS5 auth:     yes (user: %s)\n", cfg.SOCKS5.Username)
 	}
@@ -571,7 +631,7 @@ func (w *Wizard) printSummary(cfg *config.Config, configPath string) {
 
 	if cfg.AutoRoutes.Enabled {
 		fmt.Printf("  Mesh DNS:        follows autoroutes; suffixes come from the agent.\n")
-		fmt.Printf("                   systemd-resolved is configured automatically on each poll.\n")
+		fmt.Printf("                   host DNS is updated automatically on each agent snapshot.\n")
 	}
 
 	fmt.Println()

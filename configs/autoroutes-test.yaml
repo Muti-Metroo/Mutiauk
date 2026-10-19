@@ -16,11 +16,9 @@ routes:
   []
 
 autoroutes:
+  # Routes, mesh hosts, and DNS suffixes are pushed by the agent over the
+  # SOCKS5 endpoint above (route-watch); no separate API URL or token.
   enabled: true
-  # Connect to host's Muti Metroo API
-  url: "http://host.docker.internal:8080"
-  poll_interval: 10s
-  timeout: 5s
 
 nat:
   tcp_timeout: 1h

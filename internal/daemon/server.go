@@ -216,7 +216,7 @@ func (s *Server) setRunning(running bool) error {
 	return nil
 }
 
-// startServices starts API server, routes, autoroutes poller, and NAT GC
+// startServices starts API server, routes, autoroutes route-watch, and NAT GC
 func (s *Server) startServices(ctx context.Context) {
 	cfg := s.cfg.Load()
 
@@ -548,7 +548,7 @@ func (s *Server) startAutoRoutes(ctx context.Context) {
 
 // startDNS binds the local mesh DNS resolver to the TUN IPv4 address
 // on port 53. The resolver starts with no active suffixes; the
-// autoroutes poller delivers the suffix set on each tick and
+// autoroutes route-watch delivers the suffix set with each snapshot and
 // applyDNSIntegration drives whichever host backend was selected.
 func (s *Server) startDNS(ctx context.Context) error {
 	cfg := s.cfg.Load()

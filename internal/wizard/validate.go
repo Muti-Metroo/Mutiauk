@@ -4,6 +4,8 @@ package wizard
 import (
 	"fmt"
 	"net"
+	"net/url"
+	"strings"
 )
 
 // Validator is a function that validates a string input and returns an error if invalid.
@@ -105,6 +107,37 @@ func HostPort() Validator {
 		}
 		if host == "" || port == "" {
 			return fmt.Errorf("both host and port are required")
+		}
+		return nil
+	}
+}
+
+// IsWebSocketURL reports whether s uses the ws:// or wss:// scheme.
+func IsWebSocketURL(s string) bool {
+	return strings.HasPrefix(s, "ws://") || strings.HasPrefix(s, "wss://")
+}
+
+// SOCKS5Server validates a socks5.server value: either a plain host:port
+// or a ws:// / wss:// URL that includes a host. The rules mirror
+// config.Validate so the wizard never writes a file the daemon rejects.
+func SOCKS5Server() Validator {
+	return func(s string) error {
+		if !IsWebSocketURL(s) {
+			host, port, err := net.SplitHostPort(s)
+			if err != nil {
+				return fmt.Errorf("invalid address format (use host:port, or wss://host:port/path)")
+			}
+			if host == "" || port == "" {
+				return fmt.Errorf("both host and port are required")
+			}
+			return nil
+		}
+		u, err := url.Parse(s)
+		if err != nil {
+			return fmt.Errorf("invalid WebSocket URL: %v", err)
+		}
+		if u.Host == "" {
+			return fmt.Errorf("WebSocket URL must include a host")
 		}
 		return nil
 	}

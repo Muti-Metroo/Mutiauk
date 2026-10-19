@@ -13,8 +13,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Name != "mutiauk" {
 		t.Errorf("Name = %s, want mutiauk", cfg.Name)
 	}
-	if cfg.Description != "Mutiauk TUN-based SOCKS5 proxy agent" {
-		t.Errorf("Description = %s, want 'Mutiauk TUN-based SOCKS5 proxy agent'", cfg.Description)
+	if cfg.Description != "Mutiauk TUN interface for Muti Metroo" {
+		t.Errorf("Description = %s, want 'Mutiauk TUN interface for Muti Metroo'", cfg.Description)
 	}
 	if cfg.ConfigPath == "" {
 		t.Error("ConfigPath should not be empty")

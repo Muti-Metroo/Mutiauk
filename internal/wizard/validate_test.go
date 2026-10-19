@@ -3,6 +3,8 @@ package wizard
 import (
 	"strings"
 	"testing"
+
+	"github.com/Muti-Metroo/Mutiauk/internal/config"
 )
 
 func TestRequired(t *testing.T) {
@@ -306,6 +308,66 @@ func TestHostPort(t *testing.T) {
 				t.Errorf("error should contain %q, got: %v", tt.errMsg, err)
 			}
 		})
+	}
+}
+
+func TestSOCKS5Server(t *testing.T) {
+	validator := SOCKS5Server()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+		errMsg  string
+	}{
+		{"host:port", "127.0.0.1:1080", false, ""},
+		{"hostname:port", "agent.example.com:1080", false, ""},
+		{"IPv6 host:port", "[::1]:1080", false, ""},
+		{"wss URL with path", "wss://relay.example.com:8443/socks5", false, ""},
+		{"wss URL without port", "wss://relay.example.com/socks5", false, ""},
+		{"ws URL", "ws://10.0.0.5:8080/socks5", false, ""},
+		{"wss URL without host", "wss:///socks5", true, "must include a host"},
+		{"ws URL bare scheme", "ws://", true, "must include a host"},
+		{"wss URL bad escape", "wss://relay.example.com/%zz", true, "invalid WebSocket URL"},
+		{"missing port", "127.0.0.1", true, "wss://host:port/path"},
+		{"missing host", ":1080", true, "both host and port"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validator(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SOCKS5Server()(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+			if tt.errMsg != "" && err != nil && !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("error should contain %q, got: %v", tt.errMsg, err)
+			}
+		})
+	}
+}
+
+// TestSOCKS5Server_MatchesConfigValidate cross-checks the wizard
+// validator against config.Validate so the two never drift apart.
+func TestSOCKS5Server_MatchesConfigValidate(t *testing.T) {
+	inputs := []string{
+		"127.0.0.1:1080",
+		"wss://relay.example.com:8443/socks5",
+		"ws://relay.example.com/socks5",
+		"wss:///socks5",
+		"127.0.0.1",
+		":1080",
+	}
+	for _, in := range inputs {
+		cfg := &config.Config{
+			TUN:    config.TUNConfig{Name: "tun0", MTU: 1400, Address: "10.200.200.1/24"},
+			SOCKS5: config.SOCKS5Config{Server: in},
+		}
+		cfg.ApplyDefaults()
+		cfgErr := cfg.Validate()
+		wizErr := SOCKS5Server()(in)
+		if (cfgErr == nil) != (wizErr == nil) {
+			t.Errorf("%q: config.Validate err=%v, SOCKS5Server err=%v (must agree)", in, cfgErr, wizErr)
+		}
 	}
 }
 

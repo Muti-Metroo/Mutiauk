@@ -35,7 +35,7 @@ func DefaultConfig(configPath string) ServiceConfig {
 
 	return ServiceConfig{
 		Name:        "mutiauk",
-		Description: "Mutiauk TUN-based SOCKS5 proxy agent",
+		Description: "Mutiauk TUN interface for Muti Metroo",
 		ConfigPath:  absPath,
 		WorkingDir:  workDir,
 	}

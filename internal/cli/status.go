@@ -19,12 +19,12 @@ import (
 
 // StatusResult holds the complete status information
 type StatusResult struct {
-	Daemon       DaemonStatus           `json:"daemon"`
-	TUN          TUNStatus              `json:"tun"`
-	SOCKS5       SOCKS5Status           `json:"socks5"`
-	AutoRoutes   *api.AutoRoutesStatus  `json:"autoroutes,omitempty"`
-	Routes       []RouteStatus          `json:"routes"`
-	Connectivity ConnectivityStatus     `json:"connectivity"`
+	Daemon       DaemonStatus          `json:"daemon"`
+	TUN          TUNStatus             `json:"tun"`
+	SOCKS5       SOCKS5Status          `json:"socks5"`
+	AutoRoutes   *api.AutoRoutesStatus `json:"autoroutes,omitempty"`
+	Routes       []RouteStatus         `json:"routes"`
+	Connectivity ConnectivityStatus    `json:"connectivity"`
 }
 
 // DaemonStatus holds daemon process status

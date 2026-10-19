@@ -17,10 +17,11 @@ func newHostCmd() *cobra.Command {
 		Short: "Mesh hostname commands",
 		Long: `Inspect mesh hostnames known to the daemon.
 
-Mesh hostnames are managed centrally on the Muti Metroo agent's HTTP API.
-The local daemon polls /api/dashboard alongside autoroutes and serves
-A/AAAA records for the suffixes the agent advertises in
-mesh_hosts_suffixes. Use this command to inspect what the daemon
+Mesh hostnames are managed centrally on the Muti Metroo agent. When
+autoroutes is enabled, the agent pushes mesh hosts and suffixes to the
+daemon over the SOCKS5 route-watch stream (together with routes), and
+the daemon serves A/AAAA records for the suffixes the agent advertises
+in mesh_hosts_suffixes. Use this command to inspect what the daemon
 currently serves; to add or remove a hostname or a suffix, talk to
 the Muti Metroo agent.`,
 	}
