@@ -377,8 +377,8 @@ make build-linux
 # Build for ARM64
 make build-linux-arm64
 
-# Build for macOS and Windows (these targets pin GOTOOLCHAIN=go1.25.5;
-# the gVisor dependency does not compile with Go 1.26)
+# Build for macOS and Windows (Go 1.27.2+, required by gVisor; an older
+# local Go downloads it automatically)
 make build-darwin           # bin/mutiauk-darwin-arm64
 make build-darwin-amd64     # bin/mutiauk-darwin-amd64
 make build-windows          # bin/mutiauk-windows-amd64.exe (embeds Wintun)

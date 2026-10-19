@@ -53,11 +53,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # go.mod pins go 1.25.x. gVisor does not compile on Go 1.26, so the
-      # toolchain must come from go.mod rather than a floating version.
+      # gVisor requires the Go version in go.mod; use the latest patch of it.
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27"
 
       - name: Build binary
         env:

@@ -1,4 +1,4 @@
-.PHONY: all build build-linux build-windows build-windows-arm64 \
+.PHONY: tun-e2e all build build-linux build-windows build-windows-arm64 \
 	deploy-windows-test clean test lint fmt install help \
 	loadtest-up loadtest-down loadtest-shell loadtest-run loadtest-logs
 
@@ -26,22 +26,19 @@ build-linux: ## Build for Linux (required for TUN support)
 build-linux-arm64: ## Build for Linux ARM64
 	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-linux-arm64 ./cmd/mutiauk
 
-# macOS builds pin the Go 1.25 toolchain: the vendored gVisor does not compile
-# under Go 1.26 (pkg/sync constant redeclaration).
 build-darwin: ## Build for macOS ARM64 (Apple Silicon)
-	GOTOOLCHAIN=go1.25.5 GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-darwin-arm64 ./cmd/mutiauk
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-darwin-arm64 ./cmd/mutiauk
 
 build-darwin-amd64: ## Build for macOS AMD64 (Intel)
-	GOTOOLCHAIN=go1.25.5 GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-darwin-amd64 ./cmd/mutiauk
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-darwin-amd64 ./cmd/mutiauk
 
-# Windows builds pin the Go 1.25 toolchain for the same gVisor reason as
-# macOS. The Wintun driver DLL is embedded in the binary (see internal/tun),
-# so the .exe is self-contained.
+# The Wintun driver DLL is embedded in the binary (see internal/tun), so the
+# .exe is self-contained.
 build-windows: ## Build for Windows AMD64
-	GOTOOLCHAIN=go1.25.5 GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-windows-amd64.exe ./cmd/mutiauk
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-windows-amd64.exe ./cmd/mutiauk
 
 build-windows-arm64: ## Build for Windows ARM64
-	GOTOOLCHAIN=go1.25.5 GOOS=windows GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-windows-arm64.exe ./cmd/mutiauk
+	GOOS=windows GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-windows-arm64.exe ./cmd/mutiauk
 
 build-all: build-linux build-linux-arm64 build-darwin build-darwin-amd64 build-windows build-windows-arm64 ## Build for all supported platforms
 
@@ -94,6 +91,9 @@ logs: ## Show daemon logs
 	docker-compose -f test/docker-compose.yml logs -f kali
 
 # Load testing with Muti Metroo tunnel
+tun-e2e: ## End-to-end TUN test against real Muti Metroo agents (needs Docker and ../Muti-Metroo)
+	test/tun-e2e/run.sh
+
 loadtest-up: build-linux ## Start load test environment
 	docker-compose -f test/loadtest/docker-compose.yml up --build -d
 

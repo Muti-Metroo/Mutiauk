@@ -21,10 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # go.mod pins Go 1.25.x: the vendored gVisor does not compile on 1.26.
+      # gVisor requires the Go version in go.mod; use the latest patch of it.
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27"
 
       - name: gofmt
         run: |
@@ -60,7 +60,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.27"
 
       # vet as well as build, so platform-specific files (_darwin.go,
       # _windows.go) are checked too.

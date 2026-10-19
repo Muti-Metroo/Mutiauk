@@ -52,19 +52,18 @@ Platform-specific code lives in `_linux.go` / `_darwin.go` / `_windows.go` /
 
 ## Build and test
 
-**Go is pinned to 1.25.5**: the vendored gVisor dependency does not compile
-under Go 1.26 (`pkg/sync` constant redeclaration). If the host's default Go is
-newer than 1.25, prefix every go command:
+**Go 1.27.2 or later**: `go.mod` requires it because the gVisor dependency
+does (gVisor tracks the latest Go release and does not compile on older
+ones). An older local Go downloads the right toolchain automatically
+(`GOTOOLCHAIN=auto`, the default).
 
 ```bash
-GOTOOLCHAIN=go1.25.5 go build ./...
-GOTOOLCHAIN=go1.25.5 go test ./...        # 17 packages
-GOTOOLCHAIN=go1.25.5 go vet ./...
+go build ./...
+go test ./...
+go vet ./...
 ```
 
-The Makefile pins the toolchain for the darwin/windows cross-compile targets
-but not for `build`/`test`, so the same prefix applies to `make build` /
-`make test` on a Go 1.26+ host:
+The Makefile targets need no toolchain prefix:
 
 ```bash
 make build                 # current platform -> bin/mutiauk
@@ -72,10 +71,11 @@ make build-all             # linux/darwin/windows, amd64+arm64
 make test                  # go test -v ./...
 make lint / make fmt / make tidy
 make docker-test           # full Docker test rig (Kali + SOCKS5 + nginx)
+make tun-e2e               # TUN data path against real Muti Metroo agents (Docker)
 make loadtest-up           # load-test environment against a Muti Metroo tunnel
 ```
 
-Releases in CI run on `ubuntu-latest` with Go 1.25, so Linux-targeted work can
+Releases in CI run on `ubuntu-latest` with the latest Go 1.27 patch release, so Linux-targeted work can
 also be verified with `make docker-test` from macOS.
 
 ## Release process
