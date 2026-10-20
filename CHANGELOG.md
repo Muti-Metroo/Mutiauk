@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.7](https://github.com/Muti-Metroo/Mutiauk/compare/mutiauk-v0.5.6...mutiauk-v0.5.7) (2026-10-19)
+
+
+### Bug Fixes
+
+* **deps:** update gVisor and build with Go 1.27 ([6f077bb](https://github.com/Muti-Metroo/Mutiauk/commit/6f077bbab7c09f7aa475744eef8231eec5799dcd))
+
 ## [0.5.6](https://github.com/Muti-Metroo/Mutiauk/compare/mutiauk-v0.5.5...mutiauk-v0.5.6) (2026-10-19)
 
 
